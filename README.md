@@ -118,4 +118,10 @@ CapRover (the API sits behind the web dashboard's nginx, which serves the SPA an
 3. Deploy the `backend/` directory as the app root (it contains `captain-definition` with `./Dockerfile`), e.g. `cd backend && caprover deploy`.
 4. Enable HTTPS and force HTTPS on the **web** app (the public entry point); the session cookie is `Secure` by default. The default `TRUSTED_PROXIES` (private ranges) covers CapRover's nginx and the web app's nginx, so rate limits see the real client IP from `X-Forwarded-For`.
 
+CI/CD (`.github/workflows/backend.yml`): every push and pull request touching `backend/` runs gofmt, `go vet`, a sqlc drift check, `go test -race` against Postgres 17, the smoke test and a Docker build. A push to `main` then deploys `backend/` to CapRover with the CapRover CLI. Set these in the GitHub repo (the job uses the `production` environment, where you can also require approval):
+
+- secret `CAPROVER_URL`: the CapRover dashboard URL, e.g. `https://captain.example.com`
+- secret `CAPROVER_APP_TOKEN`: in the app's Deployment tab, enable the App Token and copy it
+- variable `CAPROVER_APP`: the app name, e.g. `smsgate-api`
+
 Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
