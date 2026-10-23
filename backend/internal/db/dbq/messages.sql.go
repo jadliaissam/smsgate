@@ -12,6 +12,49 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimMessage = `-- name: ClaimMessage :one
+WITH m AS (
+    UPDATE messages SET status = 'dispatched', dispatched_at = now()
+    WHERE messages.id = $1 AND messages.device_id = $2 AND messages.status = 'queued' AND messages.expires_at > now()
+    RETURNING id, to_number, body, sim_slot, expires_at
+), e AS (
+    INSERT INTO message_events (message_id, status) SELECT id, 'dispatched' FROM m
+)
+SELECT m.id, m.to_number, m.body, m.sim_slot, m.expires_at, now()::timestamptz AS server_time FROM m
+`
+
+type ClaimMessageParams struct {
+	ID       uuid.UUID
+	DeviceID uuid.UUID
+}
+
+type ClaimMessageRow struct {
+	ID         uuid.UUID
+	ToNumber   string
+	Body       *string
+	SimSlot    *int16
+	ExpiresAt  time.Time
+	ServerTime time.Time
+}
+
+// ClaimMessage atomically moves queued -> dispatched and records the event in
+// ONE statement. Exactly one concurrent caller gets the row (the others re-check
+// status='queued' after the row lock and match nothing). This is the only query
+// that returns body to a client.
+func (q *Queries) ClaimMessage(ctx context.Context, arg ClaimMessageParams) (ClaimMessageRow, error) {
+	row := q.db.QueryRow(ctx, claimMessage, arg.ID, arg.DeviceID)
+	var i ClaimMessageRow
+	err := row.Scan(
+		&i.ID,
+		&i.ToNumber,
+		&i.Body,
+		&i.SimSlot,
+		&i.ExpiresAt,
+		&i.ServerTime,
+	)
+	return i, err
+}
+
 const getDeviceForUser = `-- name: GetDeviceForUser :one
 SELECT id, fcm_token, sims FROM devices
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
@@ -85,6 +128,62 @@ func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorPara
 	var created_at time.Time
 	err := row.Scan(&created_at)
 	return created_at, err
+}
+
+const getMessageForDevice = `-- name: GetMessageForDevice :one
+SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.status, m.expires_at, m.client_ref, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at,
+       (m.expires_at <= now())::boolean AS expired
+FROM messages m WHERE m.id = $1 AND m.device_id = $2
+`
+
+type GetMessageForDeviceParams struct {
+	ID       uuid.UUID
+	DeviceID uuid.UUID
+}
+
+type GetMessageForDeviceRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+	Expired      bool
+}
+
+// GetMessageForDevice explains a failed claim/transition: scoped to the device
+// (another device's message looks missing). expired is judged by the DB clock.
+func (q *Queries) GetMessageForDevice(ctx context.Context, arg GetMessageForDeviceParams) (GetMessageForDeviceRow, error) {
+	row := q.db.QueryRow(ctx, getMessageForDevice, arg.ID, arg.DeviceID)
+	var i GetMessageForDeviceRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.DeviceID,
+		&i.SimSlot,
+		&i.ToNumber,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.ClientRef,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.DispatchedAt,
+		&i.SentAt,
+		&i.DeliveredAt,
+		&i.FailedAt,
+		&i.Expired,
+	)
+	return i, err
 }
 
 const getMessageForUser = `-- name: GetMessageForUser :one
@@ -395,4 +494,118 @@ func (q *Queries) ListMessagesBefore(ctx context.Context, arg ListMessagesBefore
 		return nil, err
 	}
 	return items, nil
+}
+
+const listPending = `-- name: ListPending :one
+SELECT now()::timestamptz AS server_time,
+       coalesce(array_agg(p.id ORDER BY p.created_at, p.id), '{}')::uuid[] AS ids,
+       coalesce(array_agg(p.expires_at ORDER BY p.created_at, p.id), '{}')::timestamptz[] AS expires_ats
+FROM (
+    SELECT m.id, m.expires_at, m.created_at
+    FROM messages m
+    WHERE m.device_id = $1 AND m.status = 'queued' AND m.expires_at > now()
+    ORDER BY m.created_at, m.id
+    LIMIT $2
+) p
+`
+
+type ListPendingParams struct {
+	DeviceID uuid.UUID
+	RowLimit int32
+}
+
+type ListPendingRow struct {
+	ServerTime time.Time
+	Ids        []uuid.UUID
+	ExpiresAts []time.Time
+}
+
+// ListPending: this device's queued, unexpired messages, oldest first (served by
+// messages_device_status_expires_idx). Always returns exactly one row: the DB
+// clock that governs expiry (server_time) plus parallel id/expires_at arrays
+// (empty when nothing is pending). Body is never selected.
+func (q *Queries) ListPending(ctx context.Context, arg ListPendingParams) (ListPendingRow, error) {
+	row := q.db.QueryRow(ctx, listPending, arg.DeviceID, arg.RowLimit)
+	var i ListPendingRow
+	err := row.Scan(&i.ServerTime, &i.Ids, &i.ExpiresAts)
+	return i, err
+}
+
+const transitionStatus = `-- name: TransitionStatus :one
+WITH m AS (
+    UPDATE messages SET
+        status = $1::text,
+        sent_at = CASE WHEN $1::text = 'sent' THEN now() ELSE sent_at END,
+        delivered_at = CASE WHEN $1::text = 'delivered' THEN now() ELSE delivered_at END,
+        failed_at = CASE WHEN $1::text = 'failed' THEN now() ELSE failed_at END,
+        error_code = CASE WHEN $1::text = 'failed' THEN $2::text ELSE error_code END,
+        error_message = CASE WHEN $1::text = 'failed' THEN $3::text ELSE error_message END
+    WHERE messages.id = $4 AND messages.device_id = $5 AND messages.status = ANY($6::text[])
+    RETURNING id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
+), e AS (
+    INSERT INTO message_events (message_id, status, detail)
+    SELECT id, status, error_code FROM m
+)
+SELECT id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM m
+`
+
+type TransitionStatusParams struct {
+	NewStatus    string
+	ErrorCode    *string
+	ErrorMessage *string
+	ID           uuid.UUID
+	DeviceID     uuid.UUID
+	AllowedFrom  []string
+}
+
+type TransitionStatusRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+}
+
+// TransitionStatus applies one device status report. The WHERE status =
+// ANY(allowed_from) makes concurrent/duplicate reports safe: only a real
+// transition updates the row and inserts its event (detail = error_code for
+// failures); everything else matches nothing.
+func (q *Queries) TransitionStatus(ctx context.Context, arg TransitionStatusParams) (TransitionStatusRow, error) {
+	row := q.db.QueryRow(ctx, transitionStatus,
+		arg.NewStatus,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.DeviceID,
+		arg.AllowedFrom,
+	)
+	var i TransitionStatusRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.DeviceID,
+		&i.SimSlot,
+		&i.ToNumber,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.ClientRef,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.DispatchedAt,
+		&i.SentAt,
+		&i.DeliveredAt,
+		&i.FailedAt,
+	)
+	return i, err
 }
