@@ -55,6 +55,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"Argon2.Time", c.Argon2.Time, uint32(2)},
 		{"Argon2.Threads", c.Argon2.Threads, uint8(1)},
 		{"Argon2.MaxConcurrency", c.Argon2.MaxConcurrency, 2},
+		{"Argon2.MaxQueue", c.Argon2.MaxQueue, 32},
 		{"PasswordMin", c.PasswordMin, 10},
 		{"PasswordMax", c.PasswordMax, 128},
 		{"SessionTTL", c.SessionTTL, 720 * time.Hour},
@@ -148,7 +149,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 49 {
+	if len(v) != 50 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }

@@ -112,7 +112,7 @@ func Default() Config {
 		SweepInterval: 2 * time.Second,
 		SweepBatch:    500,
 
-		Argon2:      secret.ArgonParams{MemoryKiB: 19456, Time: 2, Threads: 1, MaxConcurrency: 2},
+		Argon2:      secret.ArgonParams{MemoryKiB: 19456, Time: 2, Threads: 1, MaxConcurrency: 2, MaxQueue: 32},
 		PasswordMin: 10,
 		PasswordMax: 128,
 
@@ -194,6 +194,7 @@ func (l *loader) config() (Config, error) {
 	c.Argon2.Time = uint32(l.intn("ARGON2_TIME", int64(c.Argon2.Time), math.MaxUint32))
 	c.Argon2.Threads = uint8(l.intn("ARGON2_THREADS", int64(c.Argon2.Threads), math.MaxUint8))
 	c.Argon2.MaxConcurrency = l.integer("ARGON2_MAX_CONCURRENCY", c.Argon2.MaxConcurrency)
+	c.Argon2.MaxQueue = l.integer("ARGON2_MAX_QUEUE", c.Argon2.MaxQueue)
 	c.PasswordMin = l.integer("PASSWORD_MIN_LEN", c.PasswordMin)
 	c.PasswordMax = l.integer("PASSWORD_MAX_LEN", c.PasswordMax)
 

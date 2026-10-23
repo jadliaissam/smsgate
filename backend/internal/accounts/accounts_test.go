@@ -3,10 +3,12 @@ package accounts_test
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/smsgate/backend/internal/apptest"
+	"github.com/smsgate/backend/internal/config"
 )
 
 func cookieHdr(c *http.Cookie) []string { return []string{"Cookie", c.Name + "=" + c.Value} }
@@ -148,5 +150,40 @@ func TestExpiredSession(t *testing.T) {
 	a.Advance(31 * 24 * time.Hour)
 	if resp, _ := a.Do("GET", "/app/me", nil, cookieHdr(c)...); resp.StatusCode != 401 {
 		t.Fatal(resp.StatusCode)
+	}
+}
+
+// With one hashing slot and no wait queue, concurrent logins beyond the slot
+// are rejected with 503 busy instead of queueing goroutines.
+func TestLoginBusyWhenHasherSaturated(t *testing.T) {
+	a := apptest.New(t, func(c *config.Config) { c.Argon2.MaxConcurrency = 1; c.Argon2.MaxQueue = 0 })
+	const n = 8
+	codes := make([]int, n)
+	errs := make([]any, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, m := a.Do("POST", "/app/login", map[string]string{"email": "nobody@example.com", "password": apptest.Password})
+			codes[i] = r.StatusCode
+			if e, ok := m["error"].(map[string]any); ok {
+				errs[i] = e["code"]
+			}
+		}()
+	}
+	wg.Wait()
+	busy := 0
+	for i, c := range codes {
+		switch {
+		case c == 503 && errs[i] == "busy":
+			busy++
+		case c == 401:
+		default:
+			t.Fatalf("request %d: %d %v", i, c, errs[i])
+		}
+	}
+	if busy == 0 {
+		t.Fatalf("no 503 busy among %v", codes)
 	}
 }
