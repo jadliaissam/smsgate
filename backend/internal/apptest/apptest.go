@@ -163,3 +163,14 @@ func (a *App) Signup(t *testing.T, email string) *http.Cookie {
 	t.Fatal("no session cookie")
 	return nil
 }
+
+// APIKey creates an API key for the user owning cookie and returns the secret.
+func (a *App) APIKey(t *testing.T, cookie *http.Cookie) string {
+	t.Helper()
+	r, m := a.Do("POST", "/app/api-keys", map[string]string{"name": "test"}, "Cookie", cookie.Name+"="+cookie.Value)
+	if r.StatusCode != 201 {
+		t.Fatalf("create api key: %d %v", r.StatusCode, m)
+	}
+	k, _ := m["key"].(string)
+	return k
+}

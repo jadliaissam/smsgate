@@ -98,6 +98,10 @@ func Routes(mux *http.ServeMux, d Deps) error {
 	mux.Handle("POST /app/verify", handle(s.verify))
 	mux.Handle("POST /app/login", handle(s.login))
 	mux.Handle("POST /app/logout", handle(s.logout))
-	mux.Handle("GET /app/me", RequireSession(d.Q, d.Cfg.SessionCookie, d.Now)(handle(s.me)))
+	sess := RequireSession(d.Q, d.Cfg.SessionCookie, d.Now)
+	mux.Handle("GET /app/me", sess(handle(s.me)))
+	mux.Handle("POST /app/api-keys", sess(handle(s.createAPIKey)))
+	mux.Handle("GET /app/api-keys", sess(handle(s.listAPIKeys)))
+	mux.Handle("DELETE /app/api-keys/{id}", sess(handle(s.revokeAPIKey)))
 	return nil
 }
