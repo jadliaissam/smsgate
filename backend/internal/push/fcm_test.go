@@ -2,6 +2,10 @@ package push
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"encoding/json"
 	"errors"
 	"io"
@@ -142,5 +146,39 @@ func TestNewHTTPClient(t *testing.T) {
 	tr := hc.Transport.(*http.Transport)
 	if hc.Timeout != 3*time.Second || tr.MaxIdleConnsPerHost != 7 || !tr.ForceAttemptHTTP2 {
 		t.Fatalf("%+v %+v", hc, tr)
+	}
+}
+
+func serviceAccountJSON(t *testing.T, project string) string {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, _ := x509.MarshalPKCS8PrivateKey(k)
+	b, _ := json.Marshal(map[string]string{
+		"type": "service_account", "project_id": project, "client_email": "fcm@" + project + ".iam.gserviceaccount.com",
+		"private_key_id": "k1", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+		"token_uri": "https://oauth2.googleapis.com/token",
+	})
+	return string(b)
+}
+
+// FCM_CREDENTIALS_JSON (raw JSON, convenient on env-only hosts such as
+// CapRover) takes precedence over FCM_CREDENTIALS_FILE.
+func TestNewFCMFromJSONEnv(t *testing.T) {
+	cfg := config.Config{WakeTimeout: time.Second, FCMEndpoint: "https://fcm.example"}
+	cfg.FCMCredentialsJSON = serviceAccountJSON(t, "proj-json")
+	cfg.FCMCredentialsFile = filepath.Join(t.TempDir(), "missing.json")
+	f, err := NewFCM(context.Background(), cfg, NewHTTPClient(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.url != "https://fcm.example/v1/projects/proj-json/messages:send" {
+		t.Fatal(f.url)
+	}
+	cfg.FCMCredentialsJSON = `{"nope":1}`
+	if _, err := NewFCM(context.Background(), cfg, NewHTTPClient(cfg)); err == nil || !strings.Contains(err.Error(), "FCM_CREDENTIALS_JSON") {
+		t.Fatalf("invalid: %v", err)
 	}
 }

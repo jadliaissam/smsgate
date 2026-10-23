@@ -62,7 +62,8 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `COOKIE_SECURE` | `true` (`false` when `APP_ENV=dev`) | |
 | `EMAIL_TOKEN_TTL` | `24h` | verification token validity |
 | `APIKEY_TOUCH_INTERVAL` | `1m` | min interval between `last_used_at` writes |
-| `FCM_CREDENTIALS_FILE` | empty | Firebase service-account JSON; empty disables push (noop waker) |
+| `FCM_CREDENTIALS_JSON` | empty | Firebase service-account JSON as the raw value (convenient on env-only hosts such as CapRover); takes precedence over the file |
+| `FCM_CREDENTIALS_FILE` | empty | path to the service-account JSON file (must be readable by uid 65532, the image's nonroot user). Both empty disables push (noop waker) |
 | `FCM_ENDPOINT` | `https://fcm.googleapis.com` | |
 | `WAKE_CONCURRENCY` | `64` | concurrent wake-up pushes |
 | `WAKE_TIMEOUT` | `5s` | per-push HTTP timeout |

@@ -68,6 +68,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"EmailTokenTTL", c.EmailTokenTTL, 24 * time.Hour},
 		{"APIKeyTouchInterval", c.APIKeyTouchInterval, time.Minute},
 		{"FCMCredentialsFile", c.FCMCredentialsFile, ""},
+		{"FCMCredentialsJSON", c.FCMCredentialsJSON, ""},
 		{"FCMEndpoint", c.FCMEndpoint, "https://fcm.googleapis.com"},
 		{"WakeConcurrency", c.WakeConcurrency, 64},
 		{"WakeTimeout", c.WakeTimeout, 5 * time.Second},
@@ -154,7 +155,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 52 {
+	if len(v) != 53 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
