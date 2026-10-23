@@ -88,7 +88,10 @@ func setup(ctx context.Context, base string) error {
 
 // New returns a pool on a fresh migrated database, dropped at test cleanup.
 // The test is skipped when TEST_DATABASE_URL is unset.
-func New(t *testing.T) *pgxpool.Pool {
+func New(t *testing.T) *pgxpool.Pool { t.Helper(); return NewMax(t, 0) }
+
+// NewMax is New with the pool capped at maxConns connections (0 = pgx default).
+func NewMax(t *testing.T, maxConns int32) *pgxpool.Pool {
 	t.Helper()
 	base := os.Getenv("TEST_DATABASE_URL")
 	if base == "" {
@@ -111,7 +114,14 @@ func New(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("create test db: %v", err)
 	}
-	pool, err := pgxpool.New(ctx, withDB(base, name))
+	pcfg, err := pgxpool.ParseConfig(withDB(base, name))
+	if err != nil {
+		t.Fatalf("parse test db url: %v", err)
+	}
+	if maxConns > 0 {
+		pcfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}

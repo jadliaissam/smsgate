@@ -1,8 +1,10 @@
 package devices_test
 
 import (
+	"github.com/smsgate/backend/internal/config"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,5 +309,62 @@ func TestDevicesScopedToUser(t *testing.T) {
 	}
 	if r, _ := a.Do("DELETE", "/app/devices/"+id.String(), nil, ck(cb)...); r.StatusCode != 404 {
 		t.Fatalf("%d", r.StatusCode)
+	}
+}
+
+func TestRegisterLoginNoPoolDeadlock(t *testing.T) {
+	a := apptest.New(t, func(c *config.Config) { c.DBMaxConns = 2 })
+	a.Signup(t, "a@example.com")
+	codes := make([]int, 7)
+	var wg sync.WaitGroup
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pw := "wrong-password-here"
+			if i == 6 {
+				pw = apptest.Password
+			}
+			b := reg("")
+			delete(b, "pairing_code")
+			b["email"], b["password"] = "a@example.com", pw
+			r, _ := a.Do("POST", "/device/v1/register", b)
+			codes[i] = r.StatusCode
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("register deadlocked")
+	}
+	for i, c := range codes {
+		if want := map[bool]int{true: 201, false: 401}[i == 6]; c != want {
+			t.Errorf("req %d: %d want %d", i, c, want)
+		}
+	}
+}
+
+func TestRegisterBlankEmail(t *testing.T) {
+	a := apptest.New(t)
+	a.Signup(t, "a@example.com")
+	b := reg("")
+	delete(b, "pairing_code")
+	b["email"], b["password"] = "   ", apptest.Password
+	r, m := a.Do("POST", "/device/v1/register", b)
+	if r.StatusCode != 422 || m["error"].(map[string]any)["code"] != "invalid_credentials_input" {
+		t.Fatalf("%d %v", r.StatusCode, m)
+	}
+}
+
+func TestPairingCodeNormalization(t *testing.T) {
+	a := apptest.New(t)
+	c := a.Signup(t, "a@example.com")
+	code := newCode(t, a, c)
+	typed := strings.NewReplacer("0", "o", "1", "l").Replace(strings.ToLower(code))
+	typed = typed[:4] + "-" + typed[4:] + " "
+	if r, m := a.Do("POST", "/device/v1/register", reg(typed)); r.StatusCode != 201 {
+		t.Fatalf("%q: %d %v", typed, r.StatusCode, m)
 	}
 }

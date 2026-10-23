@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/smsgate/backend/internal/accounts"
 	"github.com/smsgate/backend/internal/db/dbq"
@@ -51,7 +52,9 @@ func (s *service) register(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(w, r, &in, s.Cfg.MaxBodyBytes); err != nil {
 		return err
 	}
-	useCode := in.PairingCode != ""
+	in.Email = strings.TrimSpace(in.Email)
+	code := normalizeCode(in.PairingCode)
+	useCode := code != ""
 	useLogin := in.Email != "" || in.Password != ""
 	if useCode == useLogin || (useLogin && (in.Email == "" || in.Password == "")) {
 		return httpx.Unprocessable("invalid_credentials_input", "provide either pairing_code or email and password")
@@ -75,24 +78,15 @@ func (s *service) register(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx := r.Context()
 
-	var uid uuid.UUID
-	tx, err := s.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	q := s.Q.WithTx(tx)
-	if useCode {
-		now := s.Now()
-		code := strings.ToUpper(strings.TrimSpace(in.PairingCode))
-		uid, err = q.ConsumePairingCode(ctx, dbq.ConsumePairingCodeParams{CodeHash: secret.Hash(code), Now: &now})
-		if err != nil {
-			if isNoRows(err) {
-				return httpx.BadRequest("invalid_pairing_code", "pairing code is invalid or expired")
-			}
-			return err
-		}
-	} else {
+	// No hashing (argon2 waits on a semaphore and needs its own DB conn) may
+	// happen while a transaction/conn is held, or concurrent registrations
+	// deadlock the pool. So the login path authenticates before any Begin.
+	var (
+		uid uuid.UUID
+		q   = s.Q
+		tx  pgx.Tx
+	)
+	if useLogin {
 		u, err := s.Auth.Authenticate(ctx, in.Email, in.Password)
 		if err != nil {
 			return err
@@ -101,6 +95,22 @@ func (s *service) register(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		uid = u.ID
+	} else {
+		// Consume the code and insert the device atomically.
+		tx, err = s.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+		q = s.Q.WithTx(tx)
+		now := s.Now()
+		uid, err = q.ConsumePairingCode(ctx, dbq.ConsumePairingCodeParams{CodeHash: secret.Hash(code), Now: &now})
+		if err != nil {
+			if isNoRows(err) {
+				return httpx.BadRequest("invalid_pairing_code", "pairing code is invalid or expired")
+			}
+			return err
+		}
 	}
 
 	token := secret.Token(tokenPrefix)
@@ -115,8 +125,10 @@ func (s *service) register(w http.ResponseWriter, r *http.Request) error {
 	if err := q.CreateDevice(ctx, p); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
+	if tx != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
 	}
 	return httpx.JSON(w, http.StatusCreated, struct {
 		DeviceID    uuid.UUID `json:"device_id"`
