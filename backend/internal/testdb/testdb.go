@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,7 +25,32 @@ var (
 	once    sync.Once
 	tmplErr error
 	tmpl    string
+	// cloneMu serialises CREATE DATABASE ... TEMPLATE: Postgres rejects concurrent clones of one template.
+	cloneMu sync.Mutex
 )
+
+// dropStale removes templates left behind by earlier runs whose process is gone.
+func dropStale(ctx context.Context, c *pgx.Conn, self string) {
+	rows, err := c.Query(ctx, `SELECT datname FROM pg_database WHERE datname LIKE 'smsgate\_tmpl\_%'`)
+	if err != nil {
+		return
+	}
+	var stale []string
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil && n != self {
+			stale = append(stale, n)
+		}
+	}
+	rows.Close()
+	for _, n := range stale {
+		pid, err := strconv.Atoi(strings.TrimPrefix(n, "smsgate_tmpl_"))
+		if err == nil && syscall.Kill(pid, 0) == nil {
+			continue // owner still running (parallel package test binary)
+		}
+		_, _ = c.Exec(ctx, "DROP DATABASE IF EXISTS "+n+" WITH (FORCE)")
+	}
+}
 
 func withDB(base, name string) string {
 	u, err := url.Parse(base)
@@ -45,6 +73,7 @@ func admin(ctx context.Context, base string, fn func(*pgx.Conn) error) error {
 func setup(ctx context.Context, base string) error {
 	tmpl = fmt.Sprintf("smsgate_tmpl_%d", os.Getpid())
 	err := admin(ctx, base, func(c *pgx.Conn) error {
+		dropStale(ctx, c, tmpl)
 		if _, err := c.Exec(ctx, "DROP DATABASE IF EXISTS "+tmpl); err != nil {
 			return err
 		}
@@ -73,10 +102,12 @@ func New(t *testing.T) *pgxpool.Pool {
 	var rnd [6]byte
 	_, _ = rand.Read(rnd[:])
 	name := "t_" + hex.EncodeToString(rnd[:])
+	cloneMu.Lock()
 	err := admin(ctx, base, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", name, tmpl))
 		return err
 	})
+	cloneMu.Unlock()
 	if err != nil {
 		t.Fatalf("create test db: %v", err)
 	}
