@@ -212,9 +212,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		if old.RequestHash == nil || *old.RequestHash != hash {
 			return Message{}, false, httpx.Conflict("idempotency_mismatch", "Idempotency-Key was already used with a different request")
 		}
-		return FromRow(old), false, nil
+		return fromPub(pubRow{
+			ID: old.ID, UserID: old.UserID, DeviceID: old.DeviceID, SimSlot: old.SimSlot, ToNumber: old.ToNumber,
+			Status: old.Status, ExpiresAt: old.ExpiresAt, ClientRef: old.ClientRef, ErrorCode: old.ErrorCode,
+			ErrorMessage: old.ErrorMessage, CreatedAt: old.CreatedAt, DispatchedAt: old.DispatchedAt, SentAt: old.SentAt,
+			DeliveredAt: old.DeliveredAt, FailedAt: old.FailedAt,
+		}), false, nil
 	}
-	m := FromRow(dbq.Message(row))
+	m := fromPub(pubRow(row))
 	if dev.FcmToken != nil && *dev.FcmToken != "" {
 		s.wake(push.WakeTarget{DeviceID: in.DeviceID, FCMToken: *dev.FcmToken, MessageID: m.ID, ExpiresAt: m.ExpiresAt})
 	}

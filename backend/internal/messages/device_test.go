@@ -270,6 +270,22 @@ func TestInvalidTransition(t *testing.T) {
 	}
 }
 
+// Only the sweeper's device_lost verdict can be overturned by a late report;
+// a failure the device reported itself is final.
+func TestFailedByDeviceIsFinal(t *testing.T) {
+	f := setupDev(t, "fin@example.com")
+	id := f.queue(t)
+	f.claim(id)
+	if st, m := f.report(id, map[string]any{"status": "failed", "error_code": "radio_off"}); st != 200 {
+		t.Fatalf("%d %v", st, m)
+	}
+	for _, s := range []string{"sent", "delivered"} {
+		if st, m := f.report(id, map[string]any{"status": s}); st != 409 || errCode(m) != "invalid_transition" {
+			t.Fatalf("failed->%s %d %v", s, st, m)
+		}
+	}
+}
+
 func TestStatusNotFound(t *testing.T) {
 	f := setupDev(t, "snf@example.com")
 	id := f.queue(t)

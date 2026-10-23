@@ -7,6 +7,7 @@ WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL;
 -- Message lifecycle time is the DB clock: expires_at = now() + ttl. When the
 -- (user_id, idempotency_key) pair already exists nothing is inserted (no event
 -- either, the data-modifying CTE selects from the empty m) and no row returns.
+-- The body is never read back.
 -- name: InsertMessage :one
 WITH m AS (
     INSERT INTO messages (id, user_id, device_id, sim_slot, to_number, body, status,
@@ -15,14 +16,16 @@ WITH m AS (
             now() + make_interval(secs => @ttl_seconds::float8),
             sqlc.narg('client_ref'), sqlc.narg('idempotency_key'), @request_hash)
     ON CONFLICT (user_id, idempotency_key) DO NOTHING
-    RETURNING *
+    RETURNING id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
 ), e AS (
     INSERT INTO message_events (message_id, status) SELECT id, 'queued' FROM m
 )
 SELECT * FROM m;
 
+-- GetMessageByIdem loads an idempotent replay's original (no body).
 -- name: GetMessageByIdem :one
-SELECT * FROM messages WHERE user_id = @user_id AND idempotency_key = @idempotency_key;
+SELECT id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at, request_hash
+FROM messages WHERE user_id = @user_id AND idempotency_key = @idempotency_key;
 
 -- Public reads never load body.
 -- name: GetMessageForUser :one
@@ -99,16 +102,23 @@ FROM messages m WHERE m.id = @id AND m.device_id = @device_id;
 -- ANY(allowed_from) makes concurrent/duplicate reports safe: only a real
 -- transition updates the row and inserts its event (detail = error_code for
 -- failures); everything else matches nothing.
+-- A late sent/delivered report also overturns the sweeper's failed/device_lost
+-- verdict (the phone was only out of touch): the error fields and failed_at
+-- are cleared, the failed event stays in the trail. Failures the device
+-- reported itself remain final.
 -- name: TransitionStatus :one
 WITH m AS (
     UPDATE messages SET
         status = @new_status::text,
         sent_at = CASE WHEN @new_status::text = 'sent' THEN now() ELSE sent_at END,
         delivered_at = CASE WHEN @new_status::text = 'delivered' THEN now() ELSE delivered_at END,
-        failed_at = CASE WHEN @new_status::text = 'failed' THEN now() ELSE failed_at END,
-        error_code = CASE WHEN @new_status::text = 'failed' THEN sqlc.narg('error_code')::text ELSE error_code END,
-        error_message = CASE WHEN @new_status::text = 'failed' THEN sqlc.narg('error_message')::text ELSE error_message END
-    WHERE messages.id = @id AND messages.device_id = @device_id AND messages.status = ANY(@allowed_from::text[])
+        failed_at = CASE WHEN @new_status::text = 'failed' THEN now() WHEN messages.status = 'failed' THEN NULL ELSE failed_at END,
+        error_code = CASE WHEN @new_status::text = 'failed' THEN sqlc.narg('error_code')::text WHEN messages.status = 'failed' THEN NULL ELSE error_code END,
+        error_message = CASE WHEN @new_status::text = 'failed' THEN sqlc.narg('error_message')::text WHEN messages.status = 'failed' THEN NULL ELSE error_message END
+    WHERE messages.id = @id AND messages.device_id = @device_id
+      AND (messages.status = ANY(@allowed_from::text[])
+           OR (messages.status = 'failed' AND messages.error_code = 'device_lost'
+               AND @new_status::text IN ('sent', 'delivered')))
     RETURNING id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
 ), e AS (
     INSERT INTO message_events (message_id, status, detail)

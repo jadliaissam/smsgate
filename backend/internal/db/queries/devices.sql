@@ -21,7 +21,10 @@ UPDATE devices SET fcm_token = $2 WHERE id = $1 AND revoked_at IS NULL;
 -- Only clears the token that FCM rejected, so a freshly registered one survives.
 UPDATE devices SET fcm_token = NULL WHERE id = $1 AND fcm_token = $2;
 
--- name: Heartbeat :execrows
+-- Heartbeat returns the DB clock (the one governing message expiry) as
+-- server_time; last_seen_at uses the app clock like the online window (R3).
+-- No row means the device was revoked meanwhile.
+-- name: Heartbeat :one
 UPDATE devices SET
     battery = sqlc.narg('battery'),
     charging = sqlc.narg('charging'),
@@ -29,7 +32,8 @@ UPDATE devices SET
     sims = COALESCE(sqlc.narg('sims')::jsonb, sims),
     app_version = COALESCE(sqlc.narg('app_version'), app_version),
     last_seen_at = @now
-WHERE id = @id AND revoked_at IS NULL;
+WHERE id = @id AND revoked_at IS NULL
+RETURNING now()::timestamptz AS server_time;
 
 -- name: ListDevices :many
 SELECT id, name, sims, battery, charging, last_seen_at,
