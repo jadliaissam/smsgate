@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/mail"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -81,7 +82,18 @@ type Config struct {
 	SMTPPassword string
 	SMTPFrom     string
 	SMTPTimeout  time.Duration
+
+	// Rate limits (requests per minute, burst equal; 0 disables), the bound
+	// on tracked keys per limiter, and the proxies whose X-Forwarded-For is
+	// believed when determining the client IP.
+	RLAuthPerMin   int
+	RLSendPerMin   int
+	RLDevicePerMin int
+	RLMaxKeys      int
+	TrustedProxies []netip.Prefix
 }
+
+const defaultTrustedProxies = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32"
 
 // devPublicURL is the PUBLIC_URL default under APP_ENV=dev; elsewhere it is required.
 const devPublicURL = "http://localhost:8080"
@@ -142,6 +154,12 @@ func Default() Config {
 		Mailer:      "smtp",
 		SMTPPort:    587,
 		SMTPTimeout: 10 * time.Second,
+
+		RLAuthPerMin:   10,
+		RLSendPerMin:   60,
+		RLDevicePerMin: 120,
+		RLMaxKeys:      100000,
+		TrustedProxies: mustPrefixes(defaultTrustedProxies),
 	}
 }
 
@@ -241,6 +259,12 @@ func (l *loader) config() (Config, error) {
 	c.SMTPFrom = l.str("SMTP_FROM", c.SMTPFrom)
 	c.SMTPTimeout = l.dur("SMTP_TIMEOUT", c.SMTPTimeout)
 
+	c.RLAuthPerMin = l.integer("RL_AUTH_PER_MIN", c.RLAuthPerMin)
+	c.RLSendPerMin = l.integer("RL_SEND_PER_MIN", c.RLSendPerMin)
+	c.RLDevicePerMin = l.integer("RL_DEVICE_PER_MIN", c.RLDevicePerMin)
+	c.RLMaxKeys = l.integer("RL_MAX_KEYS", c.RLMaxKeys)
+	c.TrustedProxies = l.prefixes("TRUSTED_PROXIES", c.TrustedProxies)
+
 	if l.record {
 		return c, l.err
 	}
@@ -286,6 +310,7 @@ func (c Config) Validate() error {
 	min1("WAKE_CONCURRENCY", int64(c.WakeConcurrency))
 	min1("FCM_HTTP_MAX_IDLE_PER_HOST", int64(c.FCMMaxIdlePerHost))
 	min1("MSG_MAX_SEGMENTS", int64(c.MaxSegments))
+	min1("RL_MAX_KEYS", int64(c.RLMaxKeys))
 	if c.Argon2.MemoryKiB < 8 {
 		errs = append(errs, fmt.Errorf("ARGON2_MEMORY_KIB: must be >= 8, got %d", c.Argon2.MemoryKiB))
 	}
@@ -432,6 +457,56 @@ func (l *loader) intn(key string, def, max int64) int64 {
 
 func (l *loader) integer(key string, def int) int {
 	return int(l.intn(key, int64(def), math.MaxInt32))
+}
+
+// prefixes parses a comma-separated list of CIDRs or bare IPs (a single
+// address); "none" means an empty list.
+func (l *loader) prefixes(key string, def []netip.Prefix) []netip.Prefix {
+	v, ok := l.lookup(key)
+	if !ok {
+		return def
+	}
+	if strings.TrimSpace(v) == "none" {
+		return []netip.Prefix{}
+	}
+	ps, err := parsePrefixes(v)
+	if err != nil {
+		l.fail(key, err)
+		return def
+	}
+	return ps
+}
+
+func parsePrefixes(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.Split(v, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !strings.Contains(f, "/") {
+			a, err := netip.ParseAddr(f)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, netip.PrefixFrom(a, a.BitLen()))
+			continue
+		}
+		p, err := netip.ParsePrefix(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
+}
+
+func mustPrefixes(v string) []netip.Prefix {
+	ps, err := parsePrefixes(v)
+	if err != nil {
+		panic(err)
+	}
+	return ps
 }
 
 func (l *loader) boolean(key string, def bool) bool {

@@ -15,9 +15,13 @@ import (
 )
 
 // Routes registers the public API; auth must authenticate API keys
-// (accounts.RequireAPIKey).
-func Routes(mux *http.ServeMux, s *Service, auth func(http.Handler) http.Handler) {
-	mux.Handle("POST /v1/messages", auth(httpx.Handle(s.create)))
+// (accounts.RequireAPIKey). sendLimit (applied after auth) wraps only
+// POST /v1/messages; pass nil for none.
+func Routes(mux *http.ServeMux, s *Service, auth, sendLimit func(http.Handler) http.Handler) {
+	if sendLimit == nil {
+		sendLimit = accounts.Identity
+	}
+	mux.Handle("POST /v1/messages", auth(sendLimit(httpx.Handle(s.create))))
 	mux.Handle("GET /v1/messages/{id}", auth(httpx.Handle(s.get)))
 	mux.Handle("GET /v1/messages", auth(httpx.Handle(s.list)))
 }

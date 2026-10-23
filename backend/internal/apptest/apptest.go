@@ -46,6 +46,9 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	cfg := config.Default()
 	cfg.Env = "dev"
 	cfg.PublicURL = "http://localhost:8080"
+	// Rate limits off unless a test opts in: fixtures sign up and pair
+	// repeatedly from the same loopback address.
+	cfg.RLAuthPerMin, cfg.RLSendPerMin, cfg.RLDevicePerMin = 0, 0, 0
 	for _, o := range opts {
 		o(&cfg)
 	}

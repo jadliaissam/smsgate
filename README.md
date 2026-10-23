@@ -74,6 +74,11 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | PLAIN auth when username set |
 | `SMTP_FROM` | empty | required when `MAILER=smtp`, e.g. `SMSGate <no-reply@example.com>` |
 | `SMTP_TIMEOUT` | `10s` | dial and whole-conversation timeout |
+| `RL_AUTH_PER_MIN` | `10` | requests/minute (burst equal) per client IP, shared by `POST /app/signup`, `/app/verify`, `/app/login` and `/device/v1/register`; `0` disables |
+| `RL_SEND_PER_MIN` | `60` | `POST /v1/messages` per API key; `0` disables |
+| `RL_DEVICE_PER_MIN` | `120` | `/device/v1/*` (after registration) per device; `0` disables |
+| `RL_MAX_KEYS` | `100000` | max clients tracked per limiter (bounds memory; idle entries are evicted first) |
+| `TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32` | CIDRs/IPs whose `X-Forwarded-For` is believed (`none` = no proxy). The client IP is the rightmost `X-Forwarded-For` hop that is not itself a trusted proxy, so chained proxies (CapRover nginx, then the web app's nginx) are handled and client-supplied hops are ignored |
 
 Go runtime variables `GOMEMLIMIT` (image default `96MiB`) and `GOGC` may be overridden.
 
@@ -97,7 +102,7 @@ Dashboard-style calls use a session cookie; the public API uses an API key; devi
     curl "$B/v1/messages?limit=50" -H "Authorization: Bearer $KEY"      # {"data":[...],"next_before":...}
     curl $B/v1/devices -H "Authorization: Bearer $KEY"
 
-An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`. Errors are JSON with a stable `code`.
+Request bodies must be sent with `Content-Type: application/json` (otherwise `415 unsupported_media_type`). Over a rate limit the API answers `429 rate_limited` with `Retry-After` (seconds). An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`. Errors are JSON with a stable `code`.
 
 ## Container and CapRover
 
