@@ -52,7 +52,7 @@ web/
 
 ---
 
-### Task W1: Backend — session endpoints for the dashboard
+### Task 1 (W1): Backend — session endpoints for the dashboard
 
 **Files:** Modify `backend/internal/messages/public.go` (or new `backend/internal/messages/app.go`), `backend/internal/accounts/handlers.go`, `backend/internal/server/server.go`; tests alongside.
 
@@ -67,7 +67,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement by mounting the existing handlers under the session group (no duplicated logic); run `make test` → PASS.
 - [ ] **Step 3:** Commit `feat(api): session endpoints for dashboard messages and resend verification`.
 
-### Task W2: Web scaffold, design system, API client
+### Task 2 (W2): Web scaffold, design system, API client
 
 **Files:** Create everything under `web/` except pages; `src/ui/*`, `src/api/client.ts|errors.ts|types.ts`, `src/index.css`, `src/test/*`; root `Makefile` targets `web-dev`, `web-test`, `web-build`.
 
@@ -82,7 +82,7 @@ web/
 - [ ] **Step 3:** Run `npm test` → FAIL; implement tokens + components + client; → PASS. A dev-only `/__ui` route is NOT added (YAGNI).
 - [ ] **Step 4:** Commit `feat(web): scaffold, design tokens, ui kit, api client`.
 
-### Task W3: Router, auth pages, session guard
+### Task 3 (W3): Router, auth pages, session guard
 
 **Files:** `src/main.tsx`, `src/router.tsx`, `src/api/queries.ts`, `src/layout/AuthLayout.tsx`, `src/pages/{Login,Signup,Verify}.tsx`
 
@@ -96,7 +96,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS; `npm run build`.
 - [ ] **Step 3:** Commit `feat(web): routing, auth pages, session guard`.
 
-### Task W4: App shell and overview
+### Task 4 (W4): App shell and overview
 
 **Files:** `src/layout/{AppShell,Sidebar}.tsx`, `src/pages/Overview.tsx`, `src/pages/NotFound.tsx`
 
@@ -108,7 +108,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS.
 - [ ] **Step 3:** Commit `feat(web): app shell and overview`.
 
-### Task W5: Devices and pairing
+### Task 5 (W5): Devices and pairing
 
 **Files:** `src/pages/{Devices,PairModal}.tsx`, queries in `queries.ts`
 
@@ -121,7 +121,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS.
 - [ ] **Step 3:** Commit `feat(web): devices and QR pairing`.
 
-### Task W6: API keys
+### Task 6 (W6): API keys
 
 **Files:** `src/pages/ApiKeys.tsx`, queries
 
@@ -131,7 +131,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS.
 - [ ] **Step 3:** Commit `feat(web): api keys`.
 
-### Task W7: Messages log and test send
+### Task 7 (W7): Messages log and test send
 
 **Files:** `src/pages/{Messages,MessageDrawer,SendMessageModal}.tsx`, queries
 
@@ -141,7 +141,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS.
 - [ ] **Step 3:** Commit `feat(web): messages log and test send`.
 
-### Task W8: Docs page
+### Task 8 (W8): Docs page
 
 **Files:** `src/pages/Docs.tsx`
 
@@ -151,7 +151,7 @@ web/
 - [ ] **Step 2:** Run → FAIL; implement; → PASS.
 - [ ] **Step 3:** Commit `feat(web): api docs page`.
 
-### Task W9: Container, nginx, bundle budget
+### Task 9 (W9): Container, nginx, bundle budget
 
 **Files:** `web/Dockerfile`, `web/nginx/default.conf.template`, `web/captain-definition`, `web/.dockerignore`, `web/scripts/check-bundle.mjs`, README section.
 
