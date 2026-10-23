@@ -88,6 +88,9 @@ func TestCreateMessage(t *testing.T) {
 	}
 	f.assertEvents(t, m["id"].(string), 1)
 	calls := f.app.Waker.WaitCalls(1, 2*time.Second)
+	if len(calls) == 1 && !calls[0].ExpiresAt.Equal(exp) {
+		t.Fatalf("wake ExpiresAt %v want %v", calls[0].ExpiresAt, exp)
+	}
 	if len(calls) != 1 || calls[0].FCMToken != "fcm-test" || calls[0].MessageID.String() != m["id"] || calls[0].DeviceID != f.device {
 		t.Fatalf("wake calls %+v", calls)
 	}
@@ -461,5 +464,47 @@ func TestWakeSkippedWhenSaturated(t *testing.T) {
 	svc.Wait()
 	if len(bw.calls) != 0 {
 		t.Fatal("second wake should have been skipped")
+	}
+}
+
+func (f *fixture) fcmToken(t *testing.T) *string {
+	t.Helper()
+	var tok *string
+	if err := f.app.Pool.QueryRow(context.Background(), "SELECT fcm_token FROM devices WHERE id=$1", f.device).Scan(&tok); err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+func TestInvalidFCMTokenCleared(t *testing.T) {
+	f := setup(t, "inv@example.com")
+	f.app.Waker.Err = fmt.Errorf("fcm: %w", push.ErrTokenInvalid)
+	if st, m := f.create(f.valid()); st != 202 {
+		t.Fatalf("status %d %v", st, m)
+	}
+	f.app.Messages.Wait()
+	if tok := f.fcmToken(t); tok != nil {
+		t.Fatalf("fcm_token = %q, want NULL", *tok)
+	}
+}
+
+func TestInvalidFCMTokenKeptWhenReplaced(t *testing.T) {
+	f := setup(t, "inv2@example.com")
+	f.app.Waker.Err = push.ErrTokenInvalid
+	if st, m := f.create(f.valid()); st != 202 {
+		t.Fatalf("status %d %v", st, m)
+	}
+	f.app.Messages.Wait()
+	// device re-registers a fresh token; a late failure for the old one must not wipe it
+	if _, err := f.app.Pool.Exec(context.Background(), "UPDATE devices SET fcm_token='fresh' WHERE id=$1", f.device); err != nil {
+		t.Fatal(err)
+	}
+	q := dbq.New(f.app.Pool)
+	old := "fcm-test"
+	if err := q.ClearFCMToken(context.Background(), dbq.ClearFCMTokenParams{ID: f.device, FcmToken: &old}); err != nil {
+		t.Fatal(err)
+	}
+	if tok := f.fcmToken(t); tok == nil || *tok != "fresh" {
+		t.Fatalf("fcm_token = %v, want fresh", tok)
 	}
 }

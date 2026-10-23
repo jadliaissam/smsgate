@@ -17,6 +17,10 @@ WHERE token_hash = $1 AND revoked_at IS NULL;
 -- name: UpdateFCMToken :exec
 UPDATE devices SET fcm_token = $2 WHERE id = $1 AND revoked_at IS NULL;
 
+-- name: ClearFCMToken :exec
+-- Only clears the token that FCM rejected, so a freshly registered one survives.
+UPDATE devices SET fcm_token = NULL WHERE id = $1 AND fcm_token = $2;
+
 -- name: Heartbeat :execrows
 UPDATE devices SET
     battery = sqlc.narg('battery'),
