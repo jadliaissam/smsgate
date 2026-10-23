@@ -65,7 +65,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := db.Migrate(ctx, cfg.DatabaseURL); err != nil {
+	if err := db.Migrate(ctx, cfg.DatabaseURL, cfg.MigrateLockTimeout); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	pool, err := db.Open(ctx, cfg)

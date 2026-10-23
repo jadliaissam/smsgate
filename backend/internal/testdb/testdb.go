@@ -83,7 +83,7 @@ func setup(ctx context.Context, base string) error {
 	if err != nil {
 		return err
 	}
-	return db.Migrate(ctx, withDB(base, tmpl))
+	return db.Migrate(ctx, withDB(base, tmpl), time.Minute)
 }
 
 // New returns a pool on a fresh migrated database, dropped at test cleanup.

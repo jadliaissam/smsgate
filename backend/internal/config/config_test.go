@@ -35,6 +35,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"DBMaxConns", c.DBMaxConns, int32(10)},
 		{"DBMinConns", c.DBMinConns, int32(1)},
 		{"DBMaxConnIdle", c.DBMaxConnIdle, 5 * time.Minute},
+		{"MigrateLockTimeout", c.MigrateLockTimeout, 5 * time.Minute},
 		{"ReadHeaderTimeout", c.ReadHeaderTimeout, 5 * time.Second},
 		{"ReadTimeout", c.ReadTimeout, 15 * time.Second},
 		{"WriteTimeout", c.WriteTimeout, 15 * time.Second},
@@ -152,7 +153,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 50 {
+	if len(v) != 51 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -181,6 +182,7 @@ func TestValidate(t *testing.T) {
 		{"SHUTDOWN_TIMEOUT", func(c *Config) { c.ShutdownTimeout = 0 }},
 		{"SWEEP_INTERVAL", func(c *Config) { c.SweepInterval = 0 }},
 		{"SESSION_TTL", func(c *Config) { c.SessionTTL = 0 }},
+		{"MIGRATE_LOCK_TIMEOUT", func(c *Config) { c.MigrateLockTimeout = 0 }},
 		{"MSG_TTL_MIN", func(c *Config) { c.TTLMin = time.Hour }},
 		{"MSG_TTL_DEFAULT", func(c *Config) { c.TTLDefault = 2 * time.Hour }},
 		{"MAILER", func(c *Config) { c.Mailer = "pigeon" }},

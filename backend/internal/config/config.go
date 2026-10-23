@@ -30,6 +30,8 @@ type Config struct {
 	DBMinConns    int32
 	DBMaxConnIdle time.Duration
 
+	MigrateLockTimeout time.Duration
+
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
@@ -92,6 +94,8 @@ func Default() Config {
 		DBMaxConns:    10,
 		DBMinConns:    1,
 		DBMaxConnIdle: 5 * time.Minute,
+
+		MigrateLockTimeout: 5 * time.Minute,
 
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -174,6 +178,7 @@ func (l *loader) config() (Config, error) {
 	c.DBMaxConns = int32(l.intn("DB_MAX_CONNS", int64(c.DBMaxConns), math.MaxInt32))
 	c.DBMinConns = int32(l.intn("DB_MIN_CONNS", int64(c.DBMinConns), math.MaxInt32))
 	c.DBMaxConnIdle = l.dur("DB_MAX_CONN_IDLE_TIME", c.DBMaxConnIdle)
+	c.MigrateLockTimeout = l.dur("MIGRATE_LOCK_TIMEOUT", c.MigrateLockTimeout)
 
 	c.ReadHeaderTimeout = l.dur("HTTP_READ_HEADER_TIMEOUT", c.ReadHeaderTimeout)
 	c.ReadTimeout = l.dur("HTTP_READ_TIMEOUT", c.ReadTimeout)
@@ -291,6 +296,7 @@ func (c Config) Validate() error {
 	}
 
 	pos("DB_MAX_CONN_IDLE_TIME", c.DBMaxConnIdle)
+	pos("MIGRATE_LOCK_TIMEOUT", c.MigrateLockTimeout)
 	pos("HTTP_READ_HEADER_TIMEOUT", c.ReadHeaderTimeout)
 	pos("HTTP_READ_TIMEOUT", c.ReadTimeout)
 	pos("HTTP_WRITE_TIMEOUT", c.WriteTimeout)

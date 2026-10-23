@@ -37,6 +37,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_MAX_CONNS` / `DB_MIN_CONNS` | `10` / `1` | pool size |
 | `DB_MAX_CONN_IDLE_TIME` | `5m` | idle connection lifetime |
+| `MIGRATE_LOCK_TIMEOUT` | `5m` | how long a starting instance waits for the migration advisory lock held by another one |
 | `HTTP_READ_HEADER_TIMEOUT` | `5s` | |
 | `HTTP_READ_TIMEOUT` | `15s` | |
 | `HTTP_WRITE_TIMEOUT` | `15s` | |
@@ -110,4 +111,4 @@ CapRover:
 3. Deploy the `backend/` directory as the app root (it contains `captain-definition` with `./Dockerfile`), e.g. `cd backend && caprover deploy`.
 4. Enable HTTPS and force HTTPS; the session cookie is `Secure` by default.
 
-Migrations run automatically at startup. Several instances may run against one database (the sweeper uses `FOR UPDATE SKIP LOCKED`).
+Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
