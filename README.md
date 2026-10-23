@@ -109,13 +109,13 @@ Request bodies must be sent with `Content-Type: application/json` (otherwise `41
 `backend/Dockerfile` is a multi-stage build (Go on Alpine, then `distroless/static:nonroot`, about 5 MB, `GOMEMLIMIT=96MiB`, port 8080). It builds with the classic builder, no BuildKit features. The image health check runs `/smsgate -healthcheck` (GET `/healthz` on the loopback address derived from `HTTP_ADDR`).
 
     docker build -t smsgate-api backend
-    docker run -p 8080:8080 -e DATABASE_URL=... -e SMTP_HOST=... -e SMTP_FROM=... smsgate-api
+    docker run -p 8080:8080 -e DATABASE_URL=... -e PUBLIC_URL=https://sms.example.com -e SMTP_HOST=... -e SMTP_FROM=... smsgate-api
 
-CapRover:
+CapRover (the API sits behind the web dashboard's nginx, which serves the SPA and proxies `/app`, `/v1`, `/device` and `/healthz` to the API on the same origin):
 
-1. Create an app (enable WebSocket support now if you want it ready for the later realtime step).
-2. In App Configs set the environment variables: at least `DATABASE_URL`, `PUBLIC_URL` (your https URL), `SMTP_HOST`, `SMTP_FROM` (+ credentials), and optionally `FCM_CREDENTIALS_FILE` (mount the JSON file via a persistent directory or bind mount).
+1. Create the API app, e.g. `smsgate-api`. Set **Container HTTP Port** to `8080` (the image listens on `HTTP_ADDR=:8080`). The app may stay internal (no public domain, no HTTPS needed): the web app's nginx reaches it at `http://srv-captain--smsgate-api:8080`. Enable WebSocket support now if you want it ready for the later realtime step.
+2. In App Configs set the environment variables: at least `DATABASE_URL`, `PUBLIC_URL` (the **web app's** public https origin, e.g. `https://sms.example.com`, not the API's internal address), `SMTP_HOST`, `SMTP_FROM` (+ credentials). For push wake-ups paste the Firebase service-account JSON into `FCM_CREDENTIALS_JSON` (simplest on CapRover), or mount a file and point `FCM_CREDENTIALS_FILE` at it; the file must be readable by uid 65532 (the distroless nonroot user).
 3. Deploy the `backend/` directory as the app root (it contains `captain-definition` with `./Dockerfile`), e.g. `cd backend && caprover deploy`.
-4. Enable HTTPS and force HTTPS; the session cookie is `Secure` by default.
+4. Enable HTTPS and force HTTPS on the **web** app (the public entry point); the session cookie is `Secure` by default. The default `TRUSTED_PROXIES` (private ranges) covers CapRover's nginx and the web app's nginx, so rate limits see the real client IP from `X-Forwarded-For`.
 
 Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
