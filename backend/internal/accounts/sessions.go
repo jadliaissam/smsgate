@@ -16,10 +16,24 @@ type ctxKey int
 
 const keyUser ctxKey = iota
 
-// UserID returns the authenticated user's id set by RequireSession.
+// principal is the authenticated caller stored in the request context (one
+// context value, so one allocation, for both ids).
+type principal struct {
+	user   uuid.UUID
+	apiKey uuid.UUID // zero under RequireSession
+}
+
+// UserID returns the authenticated user's id set by RequireSession or RequireAPIKey.
 func UserID(ctx context.Context) uuid.UUID {
-	id, _ := ctx.Value(keyUser).(uuid.UUID)
-	return id
+	p, _ := ctx.Value(keyUser).(principal)
+	return p.user
+}
+
+// APIKeyID returns the id of the API key that authenticated the request
+// (RequireAPIKey), or the zero UUID.
+func APIKeyID(ctx context.Context) uuid.UUID {
+	p, _ := ctx.Value(keyUser).(principal)
+	return p.apiKey
 }
 
 // RequireSession rejects requests without a valid, unexpired session cookie
@@ -38,7 +52,7 @@ func RequireSession(q *dbq.Queries, cookie string, now func() time.Time) func(ht
 				}
 				return err
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, u.ID)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, principal{user: u.ID})))
 			return nil
 		})
 	}

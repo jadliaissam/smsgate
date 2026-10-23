@@ -61,7 +61,7 @@ func RequireAPIKey(q *dbq.Queries, touchInterval time.Duration, now func() time.
 					httpx.LogFrom(r.Context()).Warn("touch api key", "key_id", row.KeyID, "err", err)
 				}
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, row.UserID)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, principal{user: row.UserID, apiKey: row.KeyID})))
 			return nil
 		})
 	}

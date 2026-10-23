@@ -15,6 +15,7 @@ import (
 	"github.com/smsgate/backend/internal/httpx"
 	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
+	"github.com/smsgate/backend/internal/ratelimit"
 	"github.com/smsgate/backend/internal/secret"
 )
 
@@ -57,15 +58,26 @@ func New(d Deps) http.Handler {
 	if err != nil {
 		panic("server: authenticator: " + err.Error()) // only if crypto/rand fails at startup
 	}
+	// Rate limits (nil limiter = disabled): per client IP on unauthenticated
+	// auth endpoints, per API key on sends, per device on the device API.
+	authRL := ratelimit.New(d.Cfg.RLAuthPerMin, d.Cfg.RLMaxKeys).Middleware(ratelimit.IPKey(d.Cfg.TrustedProxies))
+	sendRL := ratelimit.New(d.Cfg.RLSendPerMin, d.Cfg.RLMaxKeys).Middleware(func(r *http.Request) ratelimit.Key {
+		return ratelimit.Key(accounts.APIKeyID(r.Context()))
+	})
+	devRL := ratelimit.New(d.Cfg.RLDevicePerMin, d.Cfg.RLMaxKeys).Middleware(func(r *http.Request) ratelimit.Key {
+		return ratelimit.Key(devices.FromContext(r.Context()).ID)
+	})
 	accounts.Routes(mux, accounts.Deps{
 		Pool: d.Pool, Q: q, Hasher: hasher, Auth: auth, Mailer: d.Mailer, Cfg: d.Cfg, Log: d.Log, Now: d.Now,
+		AuthLimit: authRL,
 	})
-	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now})
+	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now, AuthLimit: authRL, DeviceLimit: devRL})
 	if d.Messages == nil {
 		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
 	}
-	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now))
-	messages.DeviceRoutes(mux, d.Messages, devices.RequireDevice(q))
+	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now), sendRL)
+	devAuth := devices.RequireDevice(q)
+	messages.DeviceRoutes(mux, d.Messages, func(h http.Handler) http.Handler { return devAuth(devRL(h)) })
 	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"
 	// matches every method, a wrong method on a known path also yields this 404
 	// rather than the mux's plain-text 405 (accepted for now).

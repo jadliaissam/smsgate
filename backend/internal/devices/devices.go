@@ -43,6 +43,9 @@ type Deps struct {
 	Auth *accounts.Authenticator
 	Cfg  config.Config
 	Now  func() time.Time
+	// AuthLimit (per client IP) wraps POST /device/v1/register; DeviceLimit
+	// (per device, applied after RequireDevice) the other /device/v1 routes.
+	AuthLimit, DeviceLimit func(http.Handler) http.Handler
 }
 
 type service struct{ Deps }
@@ -60,10 +63,17 @@ func Routes(mux *http.ServeMux, d Deps) {
 	key := accounts.RequireAPIKey(d.Q, d.Cfg.APIKeyTouchInterval, d.Now)
 	mux.Handle("GET /v1/devices", key(handle(s.list)))
 
-	mux.Handle("POST /device/v1/register", handle(s.register))
+	authRL, devRL := d.AuthLimit, d.DeviceLimit
+	if authRL == nil {
+		authRL = accounts.Identity
+	}
+	if devRL == nil {
+		devRL = accounts.Identity
+	}
+	mux.Handle("POST /device/v1/register", authRL(handle(s.register)))
 	dev := RequireDevice(d.Q)
-	mux.Handle("PUT /device/v1/fcm-token", dev(handle(s.setFCMToken)))
-	mux.Handle("POST /device/v1/heartbeat", dev(handle(s.heartbeat)))
+	mux.Handle("PUT /device/v1/fcm-token", dev(devRL(handle(s.setFCMToken))))
+	mux.Handle("POST /device/v1/heartbeat", dev(devRL(handle(s.heartbeat))))
 }
 
 func handle(h httpx.HandlerFunc) http.Handler { return httpx.Handle(h) }

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -21,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	d.DatabaseURL = "postgres://x"
 	d.Mailer = "log"
 	d.PublicURL = "https://sms.example.com"
-	if c != d {
+	if !reflect.DeepEqual(c, d) {
 		t.Fatalf("Load != Default+URL:\n%+v\n%+v", c, d)
 	}
 	checks := []struct {
@@ -73,6 +75,11 @@ func TestLoadDefaults(t *testing.T) {
 		{"WakeConcurrency", c.WakeConcurrency, 64},
 		{"WakeTimeout", c.WakeTimeout, 5 * time.Second},
 		{"FCMMaxIdlePerHost", c.FCMMaxIdlePerHost, 16},
+		{"RLAuthPerMin", c.RLAuthPerMin, 10},
+		{"RLSendPerMin", c.RLSendPerMin, 60},
+		{"RLDevicePerMin", c.RLDevicePerMin, 120},
+		{"RLMaxKeys", c.RLMaxKeys, 100000},
+		{"TrustedProxies", fmt.Sprint(c.TrustedProxies), "[10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/32]"},
 	}
 	for _, k := range checks {
 		if k.got != k.want {
@@ -155,7 +162,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 53 {
+	if len(v) != 58 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -193,6 +200,7 @@ func TestValidate(t *testing.T) {
 		{"SMTP_FROM", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "" }},
 		{"SMTP_PORT", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "a@b"; c.SMTPPort = 70000 }},
 		{"PUBLIC_URL", func(c *Config) { c.PublicURL = "" }},
+		{"RL_MAX_KEYS", func(c *Config) { c.RLMaxKeys = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {
@@ -313,6 +321,30 @@ func TestPublicURL(t *testing.T) {
 		t.Setenv("PUBLIC_URL", bad)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL") {
 			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}
+
+func TestRateLimitConfig(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("APP_ENV", "dev")
+	t.Setenv("TRUSTED_PROXIES", " 10.1.0.0/16 , 192.0.2.7,2001:db8::/32 ")
+	t.Setenv("RL_AUTH_PER_MIN", "0") // 0 disables
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(c.TrustedProxies); got != "[10.1.0.0/16 192.0.2.7/32 2001:db8::/32]" || c.RLAuthPerMin != 0 {
+		t.Fatalf("%s %d", got, c.RLAuthPerMin)
+	}
+	t.Setenv("TRUSTED_PROXIES", "none")
+	if c, err = Load(); err != nil || len(c.TrustedProxies) != 0 {
+		t.Fatalf("none: %v %v", c.TrustedProxies, err)
+	}
+	for _, bad := range []string{"10.0.0.0/33", "nope", "10.0.0.0/8,,x"} {
+		t.Setenv("TRUSTED_PROXIES", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+			t.Errorf("%q: %v", bad, err)
 		}
 	}
 }

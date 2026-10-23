@@ -81,16 +81,30 @@ type Deps struct {
 	Cfg    config.Config
 	Log    *slog.Logger
 	Now    func() time.Time
+	// AuthLimit, when set, wraps the unauthenticated endpoints (signup,
+	// verify, login): the per-client-IP rate limit.
+	AuthLimit func(http.Handler) http.Handler
 }
 
 type service struct{ Deps }
 
+// Identity is the no-op middleware.
+func Identity(h http.Handler) http.Handler { return h }
+
+func orIdentity(mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	if mw == nil {
+		return Identity
+	}
+	return mw
+}
+
 // Routes registers the /app account endpoints on mux.
 func Routes(mux *http.ServeMux, d Deps) {
 	s := &service{Deps: d}
-	mux.Handle("POST /app/signup", handle(s.signup))
-	mux.Handle("POST /app/verify", handle(s.verify))
-	mux.Handle("POST /app/login", handle(s.login))
+	rl := orIdentity(d.AuthLimit)
+	mux.Handle("POST /app/signup", rl(handle(s.signup)))
+	mux.Handle("POST /app/verify", rl(handle(s.verify)))
+	mux.Handle("POST /app/login", rl(handle(s.login)))
 	mux.Handle("POST /app/logout", handle(s.logout))
 	sess := RequireSession(d.Q, d.Cfg.SessionCookie, d.Now)
 	mux.Handle("GET /app/me", sess(handle(s.me)))
