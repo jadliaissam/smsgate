@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const clearFCMToken = `-- name: ClearFCMToken :exec
+UPDATE devices SET fcm_token = NULL WHERE id = $1 AND fcm_token = $2
+`
+
+type ClearFCMTokenParams struct {
+	ID       uuid.UUID
+	FcmToken *string
+}
+
+// Only clears the token that FCM rejected, so a freshly registered one survives.
+func (q *Queries) ClearFCMToken(ctx context.Context, arg ClearFCMTokenParams) error {
+	_, err := q.db.Exec(ctx, clearFCMToken, arg.ID, arg.FcmToken)
+	return err
+}
+
 const consumePairingCode = `-- name: ConsumePairingCode :one
 UPDATE pairing_codes SET used_at = $2
 WHERE code_hash = $1 AND used_at IS NULL AND expires_at > $2
@@ -28,21 +43,6 @@ func (q *Queries) ConsumePairingCode(ctx context.Context, arg ConsumePairingCode
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
-}
-
-const clearFCMToken = `-- name: ClearFCMToken :exec
-UPDATE devices SET fcm_token = NULL WHERE id = $1 AND fcm_token = $2
-`
-
-type ClearFCMTokenParams struct {
-	ID       uuid.UUID
-	FcmToken *string
-}
-
-// Only clears the token that FCM rejected, so a freshly registered one survives.
-func (q *Queries) ClearFCMToken(ctx context.Context, arg ClearFCMTokenParams) error {
-	_, err := q.db.Exec(ctx, clearFCMToken, arg.ID, arg.FcmToken)
-	return err
 }
 
 const createDevice = `-- name: CreateDevice :exec

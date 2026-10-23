@@ -115,3 +115,44 @@ WITH m AS (
     SELECT id, status, error_code FROM m
 )
 SELECT * FROM m;
+
+-- ExpireQueued moves one batch of queued messages past expires_at to 'expired'
+-- and records their events in ONE statement. Candidates are picked with
+-- FOR UPDATE SKIP LOCKED (safe with several sweeper instances; served by the
+-- partial index on expires_at) and the UPDATE re-checks status so a claim that
+-- committed meanwhile is never overwritten. DB clock (now()) governs expiry.
+-- name: ExpireQueued :many
+WITH c AS (
+    SELECT id FROM messages
+    WHERE status = 'queued' AND expires_at <= now()
+    ORDER BY expires_at
+    LIMIT @batch
+    FOR UPDATE SKIP LOCKED
+), u AS (
+    UPDATE messages m SET status = 'expired'
+    FROM c WHERE m.id = c.id AND m.status = 'queued'
+    RETURNING m.*
+), e AS (
+    INSERT INTO message_events (message_id, status, detail) SELECT id, 'expired', NULL FROM u
+)
+SELECT * FROM u;
+
+-- FailLostDispatched marks dispatched messages whose report never arrived
+-- (expires_at older than lost_after_seconds) as failed/device_lost, one batch
+-- per statement, same locking and event pattern as ExpireQueued.
+-- name: FailLostDispatched :many
+WITH c AS (
+    SELECT id FROM messages
+    WHERE status = 'dispatched'
+      AND expires_at <= now() - make_interval(secs => @lost_after_seconds::float8)
+    ORDER BY expires_at
+    LIMIT @batch
+    FOR UPDATE SKIP LOCKED
+), u AS (
+    UPDATE messages m SET status = 'failed', failed_at = now(), error_code = 'device_lost'
+    FROM c WHERE m.id = c.id AND m.status = 'dispatched'
+    RETURNING m.*
+), e AS (
+    INSERT INTO message_events (message_id, status, detail) SELECT id, 'failed', 'device_lost' FROM u
+)
+SELECT * FROM u;

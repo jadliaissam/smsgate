@@ -55,6 +55,174 @@ func (q *Queries) ClaimMessage(ctx context.Context, arg ClaimMessageParams) (Cla
 	return i, err
 }
 
+const expireQueued = `-- name: ExpireQueued :many
+WITH c AS (
+    SELECT id FROM messages
+    WHERE status = 'queued' AND expires_at <= now()
+    ORDER BY expires_at
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+), u AS (
+    UPDATE messages m SET status = 'expired'
+    FROM c WHERE m.id = c.id AND m.status = 'queued'
+    RETURNING m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.body, m.status, m.expires_at, m.client_ref, m.idempotency_key, m.request_hash, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at
+), e AS (
+    INSERT INTO message_events (message_id, status, detail) SELECT id, 'expired', NULL FROM u
+)
+SELECT id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM u
+`
+
+type ExpireQueuedRow struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	DeviceID       uuid.UUID
+	SimSlot        *int16
+	ToNumber       string
+	Body           *string
+	Status         string
+	ExpiresAt      time.Time
+	ClientRef      *string
+	IdempotencyKey *string
+	RequestHash    *string
+	ErrorCode      *string
+	ErrorMessage   *string
+	CreatedAt      time.Time
+	DispatchedAt   *time.Time
+	SentAt         *time.Time
+	DeliveredAt    *time.Time
+	FailedAt       *time.Time
+}
+
+// ExpireQueued moves one batch of queued messages past expires_at to 'expired'
+// and records their events in ONE statement. Candidates are picked with
+// FOR UPDATE SKIP LOCKED (safe with several sweeper instances; served by the
+// partial index on expires_at) and the UPDATE re-checks status so a claim that
+// committed meanwhile is never overwritten. DB clock (now()) governs expiry.
+func (q *Queries) ExpireQueued(ctx context.Context, batch int32) ([]ExpireQueuedRow, error) {
+	rows, err := q.db.Query(ctx, expireQueued, batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExpireQueuedRow
+	for rows.Next() {
+		var i ExpireQueuedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.DeviceID,
+			&i.SimSlot,
+			&i.ToNumber,
+			&i.Body,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.ClientRef,
+			&i.IdempotencyKey,
+			&i.RequestHash,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.DispatchedAt,
+			&i.SentAt,
+			&i.DeliveredAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failLostDispatched = `-- name: FailLostDispatched :many
+WITH c AS (
+    SELECT id FROM messages
+    WHERE status = 'dispatched'
+      AND expires_at <= now() - make_interval(secs => $1::float8)
+    ORDER BY expires_at
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+), u AS (
+    UPDATE messages m SET status = 'failed', failed_at = now(), error_code = 'device_lost'
+    FROM c WHERE m.id = c.id AND m.status = 'dispatched'
+    RETURNING m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.body, m.status, m.expires_at, m.client_ref, m.idempotency_key, m.request_hash, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at
+), e AS (
+    INSERT INTO message_events (message_id, status, detail) SELECT id, 'failed', 'device_lost' FROM u
+)
+SELECT id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM u
+`
+
+type FailLostDispatchedParams struct {
+	LostAfterSeconds float64
+	Batch            int32
+}
+
+type FailLostDispatchedRow struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	DeviceID       uuid.UUID
+	SimSlot        *int16
+	ToNumber       string
+	Body           *string
+	Status         string
+	ExpiresAt      time.Time
+	ClientRef      *string
+	IdempotencyKey *string
+	RequestHash    *string
+	ErrorCode      *string
+	ErrorMessage   *string
+	CreatedAt      time.Time
+	DispatchedAt   *time.Time
+	SentAt         *time.Time
+	DeliveredAt    *time.Time
+	FailedAt       *time.Time
+}
+
+// FailLostDispatched marks dispatched messages whose report never arrived
+// (expires_at older than lost_after_seconds) as failed/device_lost, one batch
+// per statement, same locking and event pattern as ExpireQueued.
+func (q *Queries) FailLostDispatched(ctx context.Context, arg FailLostDispatchedParams) ([]FailLostDispatchedRow, error) {
+	rows, err := q.db.Query(ctx, failLostDispatched, arg.LostAfterSeconds, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FailLostDispatchedRow
+	for rows.Next() {
+		var i FailLostDispatchedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.DeviceID,
+			&i.SimSlot,
+			&i.ToNumber,
+			&i.Body,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.ClientRef,
+			&i.IdempotencyKey,
+			&i.RequestHash,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.DispatchedAt,
+			&i.SentAt,
+			&i.DeliveredAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDeviceForUser = `-- name: GetDeviceForUser :one
 SELECT id, fcm_token, sims FROM devices
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
