@@ -36,34 +36,52 @@ func gsmCost(r rune) int {
 
 // Segments returns the number of SMS segments body needs and whether it must be
 // sent as UCS-2. GSM-7: 160 single / 153 per part. UCS-2 (UTF-16 code units):
-// 70 single / 67 per part. An empty body yields 0 segments.
+// 70 single / 67 per part. Concatenated parts are filled character by
+// character, so an extension-table ESC pair (GSM-7) or a surrogate pair
+// (UCS-2) that does not fit the current part starts the next one, as phones
+// split them. An empty body yields 0 segments. Single pass, no allocations.
 func Segments(body string) (segments int, ucs2 bool) {
 	if body == "" {
 		return 0, false
 	}
-	septets, units := 0, 0
-	gsm := true
+	const gsmSingle, gsmPart, ucsSingle, ucsPart = 160, 153, 70, 67
+	var (
+		septets, units    int // totals (single-part check)
+		gsmParts, gsmFill = 1, 0
+		ucsParts, ucsFill = 1, 0
+		gsm               = true
+	)
 	for _, r := range body {
 		if gsm {
 			if c := gsmCost(r); c != 0 {
 				septets += c
+				if gsmFill+c > gsmPart {
+					gsmParts++
+					gsmFill = 0
+				}
+				gsmFill += c
 			} else {
 				gsm = false
 			}
 		}
-		units += utf16.RuneLen(r)
+		u := utf16.RuneLen(r)
+		units += u
+		if ucsFill+u > ucsPart {
+			ucsParts++
+			ucsFill = 0
+		}
+		ucsFill += u
 	}
 	if gsm {
-		return ceilSegments(septets, 160, 153), false
+		if septets <= gsmSingle {
+			return 1, false
+		}
+		return gsmParts, false
 	}
-	return ceilSegments(units, 70, 67), true
-}
-
-func ceilSegments(n, single, multi int) int {
-	if n <= single {
-		return 1
+	if units <= ucsSingle {
+		return 1, true
 	}
-	return (n + multi - 1) / multi
+	return ucsParts, true
 }
 
 // ValidE164 reports whether s matches ^\+[1-9][0-9]{6,14}$.

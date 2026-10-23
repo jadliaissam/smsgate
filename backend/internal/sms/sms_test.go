@@ -60,6 +60,14 @@ func TestSegments(t *testing.T) {
 		{"101emoji", r("😀", 101), 4, true},
 		{"mixed", r("a", 100) + "ą", 2, true},
 		{"control char is ucs2", "\x01", 1, true},
+		// An ESC pair or a surrogate pair never straddles a part boundary.
+		{"ext straddles 153", r("a", 152) + "{" + r("a", 152), 3, false},
+		{"ext ends part", r("a", 151) + "{" + r("a", 153), 2, false},
+		{"euro straddles 153", r("a", 152) + "€" + r("a", 152), 3, false},
+		{"single part ext at 160", r("a", 158) + "{", 1, false},
+		{"emoji straddles 67", r("ж", 66) + "😀" + r("ж", 66), 3, true},
+		{"emoji ends part", r("ж", 65) + "😀" + r("ж", 67), 2, true},
+		{"single part emoji at 70", r("ж", 68) + "😀", 1, true},
 	}
 	for _, tc := range tests {
 		seg, ucs2 := Segments(tc.body)
@@ -70,6 +78,14 @@ func TestSegments(t *testing.T) {
 }
 
 var sink int
+
+func TestSegmentsNoAlloc(t *testing.T) {
+	for _, body := range []string{strings.Repeat("a{", 200), strings.Repeat("ж😀", 100)} {
+		if n := testing.AllocsPerRun(100, func() { sink, _ = Segments(body) }); n != 0 {
+			t.Fatalf("%v allocs", n)
+		}
+	}
+}
 
 func BenchmarkSegments(b *testing.B) {
 	bodies := map[string]string{
