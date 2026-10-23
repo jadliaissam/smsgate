@@ -368,3 +368,23 @@ func TestPairingCodeNormalization(t *testing.T) {
 		t.Fatalf("%q: %d %v", typed, r.StatusCode, m)
 	}
 }
+
+// server_time is the DB clock (the one governing message expiry), not the
+// app clock used for the online window.
+func TestHeartbeatServerTimeIsDBClock(t *testing.T) {
+	a := apptest.New(t)
+	c := a.Signup(t, "hbclock@example.com")
+	_, tok := a.PairDevice(t, c)
+	a.Advance(time.Hour)
+	r, m := a.Do("POST", "/device/v1/heartbeat", map[string]any{"battery": 50}, bearer(tok)...)
+	if r.StatusCode != 200 {
+		t.Fatalf("%d %v", r.StatusCode, m)
+	}
+	st, err := time.Parse(time.RFC3339Nano, m["server_time"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(st); d < -time.Minute || d > time.Minute {
+		t.Fatalf("server_time %s is %s off the DB clock", st, d)
+	}
+}

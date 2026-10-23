@@ -247,7 +247,8 @@ func (q *Queries) GetDeviceForUser(ctx context.Context, arg GetDeviceForUserPara
 }
 
 const getMessageByIdem = `-- name: GetMessageByIdem :one
-SELECT id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM messages WHERE user_id = $1 AND idempotency_key = $2
+SELECT id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at, request_hash
+FROM messages WHERE user_id = $1 AND idempotency_key = $2
 `
 
 type GetMessageByIdemParams struct {
@@ -255,21 +256,38 @@ type GetMessageByIdemParams struct {
 	IdempotencyKey *string
 }
 
-func (q *Queries) GetMessageByIdem(ctx context.Context, arg GetMessageByIdemParams) (Message, error) {
+type GetMessageByIdemRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+	RequestHash  *string
+}
+
+// GetMessageByIdem loads an idempotent replay's original (no body).
+func (q *Queries) GetMessageByIdem(ctx context.Context, arg GetMessageByIdemParams) (GetMessageByIdemRow, error) {
 	row := q.db.QueryRow(ctx, getMessageByIdem, arg.UserID, arg.IdempotencyKey)
-	var i Message
+	var i GetMessageByIdemRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.DeviceID,
 		&i.SimSlot,
 		&i.ToNumber,
-		&i.Body,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ClientRef,
-		&i.IdempotencyKey,
-		&i.RequestHash,
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.CreatedAt,
@@ -277,6 +295,7 @@ func (q *Queries) GetMessageByIdem(ctx context.Context, arg GetMessageByIdemPara
 		&i.SentAt,
 		&i.DeliveredAt,
 		&i.FailedAt,
+		&i.RequestHash,
 	)
 	return i, err
 }
@@ -414,11 +433,11 @@ WITH m AS (
             now() + make_interval(secs => $7::float8),
             $8, $9, $10)
     ON CONFLICT (user_id, idempotency_key) DO NOTHING
-    RETURNING id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
+    RETURNING id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
 ), e AS (
     INSERT INTO message_events (message_id, status) SELECT id, 'queued' FROM m
 )
-SELECT id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM m
+SELECT id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM m
 `
 
 type InsertMessageParams struct {
@@ -435,24 +454,21 @@ type InsertMessageParams struct {
 }
 
 type InsertMessageRow struct {
-	ID             uuid.UUID
-	UserID         uuid.UUID
-	DeviceID       uuid.UUID
-	SimSlot        *int16
-	ToNumber       string
-	Body           *string
-	Status         string
-	ExpiresAt      time.Time
-	ClientRef      *string
-	IdempotencyKey *string
-	RequestHash    *string
-	ErrorCode      *string
-	ErrorMessage   *string
-	CreatedAt      time.Time
-	DispatchedAt   *time.Time
-	SentAt         *time.Time
-	DeliveredAt    *time.Time
-	FailedAt       *time.Time
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
 }
 
 // InsertMessage creates the queued message and its 'queued' event in ONE
@@ -460,6 +476,7 @@ type InsertMessageRow struct {
 // Message lifecycle time is the DB clock: expires_at = now() + ttl. When the
 // (user_id, idempotency_key) pair already exists nothing is inserted (no event
 // either, the data-modifying CTE selects from the empty m) and no row returns.
+// The body is never read back.
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (InsertMessageRow, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
 		arg.ID,
@@ -480,12 +497,9 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (I
 		&i.DeviceID,
 		&i.SimSlot,
 		&i.ToNumber,
-		&i.Body,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ClientRef,
-		&i.IdempotencyKey,
-		&i.RequestHash,
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.CreatedAt,
@@ -705,10 +719,13 @@ WITH m AS (
         status = $1::text,
         sent_at = CASE WHEN $1::text = 'sent' THEN now() ELSE sent_at END,
         delivered_at = CASE WHEN $1::text = 'delivered' THEN now() ELSE delivered_at END,
-        failed_at = CASE WHEN $1::text = 'failed' THEN now() ELSE failed_at END,
-        error_code = CASE WHEN $1::text = 'failed' THEN $2::text ELSE error_code END,
-        error_message = CASE WHEN $1::text = 'failed' THEN $3::text ELSE error_message END
-    WHERE messages.id = $4 AND messages.device_id = $5 AND messages.status = ANY($6::text[])
+        failed_at = CASE WHEN $1::text = 'failed' THEN now() WHEN messages.status = 'failed' THEN NULL ELSE failed_at END,
+        error_code = CASE WHEN $1::text = 'failed' THEN $2::text WHEN messages.status = 'failed' THEN NULL ELSE error_code END,
+        error_message = CASE WHEN $1::text = 'failed' THEN $3::text WHEN messages.status = 'failed' THEN NULL ELSE error_message END
+    WHERE messages.id = $4 AND messages.device_id = $5
+      AND (messages.status = ANY($6::text[])
+           OR (messages.status = 'failed' AND messages.error_code = 'device_lost'
+               AND $1::text IN ('sent', 'delivered')))
     RETURNING id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at
 ), e AS (
     INSERT INTO message_events (message_id, status, detail)
@@ -748,6 +765,10 @@ type TransitionStatusRow struct {
 // ANY(allowed_from) makes concurrent/duplicate reports safe: only a real
 // transition updates the row and inserts its event (detail = error_code for
 // failures); everything else matches nothing.
+// A late sent/delivered report also overturns the sweeper's failed/device_lost
+// verdict (the phone was only out of touch): the error fields and failed_at
+// are cleared, the failed event stays in the trail. Failures the device
+// reported itself remain final.
 func (q *Queries) TransitionStatus(ctx context.Context, arg TransitionStatusParams) (TransitionStatusRow, error) {
 	row := q.db.QueryRow(ctx, transitionStatus,
 		arg.NewStatus,

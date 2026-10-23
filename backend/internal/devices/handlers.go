@@ -191,16 +191,16 @@ func (s *service) heartbeat(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := s.Now()
 	p.Now = &now
-	n, err := s.Q.Heartbeat(r.Context(), p)
+	serverTime, err := s.Q.Heartbeat(r.Context(), p)
 	if err != nil {
+		if isNoRows(err) { // revoked between authentication and update
+			return httpx.Unauthorized()
+		}
 		return err
 	}
-	if n == 0 { // revoked between authentication and update
-		return httpx.Unauthorized()
-	}
 	return httpx.JSON(w, http.StatusOK, struct {
-		ServerTime string `json:"server_time"`
-	}{now.Format(time.RFC3339Nano)})
+		ServerTime time.Time `json:"server_time"`
+	}{serverTime.UTC()})
 }
 
 func (s *service) onlineAfter() *time.Time {

@@ -195,3 +195,39 @@ func TestRunStopsOnCancel(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+func (f *fx) report(id string, body map[string]any) (int, map[string]any) {
+	r, m := f.app.Do("POST", "/device/v1/messages/"+id+"/status", body, f.dh...)
+	return r.StatusCode, m
+}
+
+// A phone that was offline past DEVICE_LOST_AFTER may still have sent the SMS:
+// its late report wins over the sweeper's device_lost verdict.
+func TestLateReportAfterDeviceLost(t *testing.T) {
+	f := setup(t, "s6@example.com")
+	sent, delivered := f.queue(t), f.queue(t)
+	for _, id := range []string{sent, delivered} {
+		if st := f.claim(id); st != 200 {
+			t.Fatalf("claim %d", st)
+		}
+		f.shift(t, id, "16 minutes")
+	}
+	if _, lost, err := f.sweeper(100).Tick(context.Background()); err != nil || lost != 2 {
+		t.Fatalf("tick lost=%d %v", lost, err)
+	}
+	st, m := f.report(sent, map[string]any{"status": "sent"})
+	if st != 200 || m["status"] != "sent" || m["sent_at"] == nil || m["error_code"] != nil || m["error_message"] != nil || m["failed_at"] != nil {
+		t.Fatalf("late sent %d %v", st, m)
+	}
+	if st, m = f.report(sent, map[string]any{"status": "delivered"}); st != 200 || m["status"] != "delivered" {
+		t.Fatalf("then delivered %d %v", st, m)
+	}
+	st, m = f.report(delivered, map[string]any{"status": "delivered"})
+	if st != 200 || m["status"] != "delivered" || m["delivered_at"] == nil || m["error_code"] != nil {
+		t.Fatalf("late delivered %d %v", st, m)
+	}
+	// The event trail keeps the device_lost failure before the recovery.
+	if f.events(t, sent, "failed") != 1 || f.events(t, sent, "sent") != 1 {
+		t.Fatal("event trail")
+	}
+}

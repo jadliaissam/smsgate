@@ -106,7 +106,7 @@ func (q *Queries) GetDeviceByTokenHash(ctx context.Context, tokenHash string) (G
 	return i, err
 }
 
-const heartbeat = `-- name: Heartbeat :execrows
+const heartbeat = `-- name: Heartbeat :one
 UPDATE devices SET
     battery = $1,
     charging = $2,
@@ -115,6 +115,7 @@ UPDATE devices SET
     app_version = COALESCE($5, app_version),
     last_seen_at = $6
 WHERE id = $7 AND revoked_at IS NULL
+RETURNING now()::timestamptz AS server_time
 `
 
 type HeartbeatParams struct {
@@ -127,8 +128,11 @@ type HeartbeatParams struct {
 	ID         uuid.UUID
 }
 
-func (q *Queries) Heartbeat(ctx context.Context, arg HeartbeatParams) (int64, error) {
-	result, err := q.db.Exec(ctx, heartbeat,
+// Heartbeat returns the DB clock (the one governing message expiry) as
+// server_time; last_seen_at uses the app clock like the online window (R3).
+// No row means the device was revoked meanwhile.
+func (q *Queries) Heartbeat(ctx context.Context, arg HeartbeatParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, heartbeat,
 		arg.Battery,
 		arg.Charging,
 		arg.Signal,
@@ -137,10 +141,9 @@ func (q *Queries) Heartbeat(ctx context.Context, arg HeartbeatParams) (int64, er
 		arg.Now,
 		arg.ID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var server_time time.Time
+	err := row.Scan(&server_time)
+	return server_time, err
 }
 
 const listDevices = `-- name: ListDevices :many
