@@ -4,6 +4,7 @@ package devices
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -67,7 +68,7 @@ func Routes(mux *http.ServeMux, d Deps) {
 
 func handle(h httpx.HandlerFunc) http.Handler { return httpx.Handle(h) }
 
-func isNoRows(err error) bool { return err == pgx.ErrNoRows }
+func isNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
 
 func invalidName() *httpx.Error {
 	return httpx.Unprocessable("invalid_name", "name must be 1-64 characters")
@@ -121,4 +122,27 @@ type deviceJSON struct {
 	Battery    *int16     `json:"battery"`
 	Charging   *bool      `json:"charging"`
 	LastSeenAt *time.Time `json:"last_seen_at"`
+}
+
+// normalizeCode canonicalises user-typed pairing codes: uppercase, drop spaces
+// and dashes, fold Crockford look-alikes (O->0, I/L->1).
+func normalizeCode(in string) string {
+	b := make([]byte, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+		switch {
+		case c == ' ' || c == '-' || c == '\t' || c == '\r' || c == '\n':
+			continue
+		case c >= 'a' && c <= 'z':
+			c -= 'a' - 'A'
+		}
+		switch c {
+		case 'O':
+			c = '0'
+		case 'I', 'L':
+			c = '1'
+		}
+		b = append(b, c)
+	}
+	return string(b)
 }

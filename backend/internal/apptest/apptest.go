@@ -47,7 +47,7 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	}
 	a := &App{
 		t:      t,
-		Pool:   testdb.New(t),
+		Pool:   testdb.NewMax(t, cfg.DBMaxConns),
 		Waker:  &push.Recorder{},
 		Mailer: &accounts.MemMailer{},
 		Cfg:    cfg,
