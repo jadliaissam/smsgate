@@ -187,3 +187,23 @@ func TestLoginBusyWhenHasherSaturated(t *testing.T) {
 		t.Fatalf("no 503 busy among %v", codes)
 	}
 }
+
+// Cookie-authenticated endpoints only accept JSON bodies (CSRF: a cross-site
+// form post or simple fetch cannot send application/json).
+func TestNonJSONContentTypeRejected(t *testing.T) {
+	a := apptest.New(t)
+	c := a.Signup(t, "csrf@example.com")
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded"} {
+		req, _ := http.NewRequest("POST", a.URL+"/app/api-keys", strings.NewReader(`{"name":"x"}`))
+		req.Header.Set("Content-Type", ct)
+		req.AddCookie(c)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 415 {
+			t.Fatalf("%s: %d", ct, resp.StatusCode)
+		}
+	}
+}

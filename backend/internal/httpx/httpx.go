@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -59,14 +61,36 @@ func Handle(h HandlerFunc) http.Handler {
 			writeError(w, he)
 			return
 		}
+		if cerr := r.Context().Err(); cerr != nil && errors.Is(err, cerr) {
+			// Client went away (e.g. while waiting for a hashing slot): not a
+			// server fault, so keep it out of the error log.
+			LogFrom(r.Context()).Debug("request cancelled", "request_id", RequestIDFrom(r.Context()), "path", r.Pattern)
+			writeError(w, &Error{http.StatusServiceUnavailable, "cancelled", "request cancelled"})
+			return
+		}
 		LogFrom(r.Context()).Error("handler error", "request_id", RequestIDFrom(r.Context()), "method", r.Method, "path", r.Pattern, "err", err)
 		writeError(w, &Error{http.StatusInternalServerError, "internal", "internal error"})
 	})
 }
 
-// Decode reads exactly one JSON value from the body into dst, rejecting
-// unknown fields, trailing data and bodies over maxBytes.
+// isJSON reports whether a Content-Type header value is application/json
+// (case-insensitive, parameters such as charset allowed). Allocation-free.
+func isJSON(ct string) bool {
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(ct), "application/json")
+}
+
+// Decode reads exactly one JSON value from the body into dst, rejecting a
+// Content-Type other than application/json (415; this also makes cookie
+// authenticated endpoints CSRF-safe, since cross-site requests without a CORS
+// preflight cannot send it), unknown fields, trailing data and bodies over
+// maxBytes.
 func Decode(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
+	if !isJSON(r.Header.Get("Content-Type")) {
+		return &Error{http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"}
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
@@ -175,7 +199,8 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 				if rec == http.ErrAbortHandler {
 					panic(rec)
 				}
-				log.Error("panic", "request_id", RequestIDFrom(r.Context()), "method", r.Method, "path", r.Pattern, "panic", rec)
+				log.Error("panic", "request_id", RequestIDFrom(r.Context()), "method", r.Method, "path", r.Pattern, "panic", rec,
+					"stack", string(debug.Stack()))
 				writeError(w, &Error{http.StatusInternalServerError, "internal", "internal error"})
 			}()
 			next.ServeHTTP(w, r)
