@@ -14,7 +14,7 @@ func cookieHdr(c *http.Cookie) []string { return []string{"Cookie", c.Name + "="
 func TestSignupVerifyLogin(t *testing.T) {
 	a := apptest.New(t)
 	resp, m := a.Do("POST", "/app/signup", map[string]string{"email": "  Bob@Example.com ", "password": apptest.Password})
-	if resp.StatusCode != 201 || m["email"] != "Bob@Example.com" || m["id"] == "" {
+	if resp.StatusCode != 201 || m["email"] != "bob@example.com" || m["id"] == "" {
 		t.Fatalf("%d %v", resp.StatusCode, m)
 	}
 	c := a.Signup(t, "alice@example.com")

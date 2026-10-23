@@ -43,7 +43,7 @@ func (s *service) signup(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(w, r, &in, s.Cfg.MaxBodyBytes); err != nil {
 		return err
 	}
-	email := strings.TrimSpace(in.Email)
+	email := strings.ToLower(strings.TrimSpace(in.Email))
 	if !validEmail(email) {
 		return httpx.Unprocessable("invalid_email", "email address is not valid")
 	}
@@ -55,7 +55,13 @@ func (s *service) signup(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	u, err := s.Q.CreateUser(ctx, dbq.CreateUserParams{ID: uuid.Must(uuid.NewV7()), Email: email, PasswordHash: hash})
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.Q.WithTx(tx)
+	u, err := q.CreateUser(ctx, dbq.CreateUserParams{ID: uuid.Must(uuid.NewV7()), Email: email, PasswordHash: hash})
 	if err != nil {
 		if isUnique(err) {
 			return httpx.Conflict("email_taken", "email already registered")
@@ -63,9 +69,12 @@ func (s *service) signup(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	tok := secret.Token("")
-	if err := s.Q.CreateEmailToken(ctx, dbq.CreateEmailTokenParams{
+	if err := q.CreateEmailToken(ctx, dbq.CreateEmailTokenParams{
 		TokenHash: secret.Hash(tok), UserID: u.ID, ExpiresAt: s.Now().Add(s.Cfg.EmailTokenTTL),
 	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	link := strings.TrimRight(s.Cfg.PublicURL, "/") + "/verify?token=" + url.QueryEscape(tok)
@@ -119,7 +128,7 @@ func (s *service) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	ctx := r.Context()
-	u, err := s.Q.GetUserByEmail(ctx, strings.TrimSpace(in.Email))
+	u, err := s.Q.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(in.Email)))
 	if err != nil {
 		if !isNoRows(err) {
 			return err
