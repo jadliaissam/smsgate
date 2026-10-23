@@ -75,8 +75,8 @@ func run() error {
 	defer pool.Close()
 
 	var waker push.Waker = push.Noop{}
-	if cfg.FCMCredentialsFile == "" {
-		log.Warn("FCM_CREDENTIALS_FILE not set: push wake-ups disabled (noop waker)")
+	if cfg.FCMCredentialsFile == "" && cfg.FCMCredentialsJSON == "" {
+		log.Warn("FCM_CREDENTIALS_JSON and FCM_CREDENTIALS_FILE not set: push wake-ups disabled (noop waker)")
 	} else {
 		// Background context: the token source captures it and must outlive startup.
 		f, err := push.NewFCM(context.Background(), cfg, push.NewHTTPClient(cfg))

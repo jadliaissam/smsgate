@@ -40,23 +40,29 @@ func NewHTTPClient(cfg config.Config) *http.Client {
 	return &http.Client{Timeout: cfg.WakeTimeout, Transport: tr}
 }
 
-// NewFCM loads the service-account JSON from cfg.FCMCredentialsFile. hc is used
+// NewFCM loads the service-account JSON from cfg.FCMCredentialsJSON (raw JSON,
+// preferred when set) or else from the file cfg.FCMCredentialsFile. hc is used
 // for both FCM calls and token refreshes.
 func NewFCM(ctx context.Context, cfg config.Config, hc *http.Client) (*FCM, error) {
-	data, err := os.ReadFile(cfg.FCMCredentialsFile)
-	if err != nil {
-		return nil, fmt.Errorf("FCM_CREDENTIALS_FILE: %w", err)
+	src := "FCM_CREDENTIALS_JSON"
+	data := []byte(cfg.FCMCredentialsJSON)
+	if len(data) == 0 {
+		src = "FCM_CREDENTIALS_FILE " + strconv.Quote(cfg.FCMCredentialsFile)
+		var err error
+		if data, err = os.ReadFile(cfg.FCMCredentialsFile); err != nil {
+			return nil, fmt.Errorf("FCM_CREDENTIALS_FILE: %w", err)
+		}
 	}
 	var sa struct {
 		ProjectID string `json:"project_id"`
 	}
 	if err := json.Unmarshal(data, &sa); err != nil || sa.ProjectID == "" {
-		return nil, fmt.Errorf("FCM_CREDENTIALS_FILE %q: not a service-account JSON with project_id", cfg.FCMCredentialsFile)
+		return nil, fmt.Errorf("%s: not a service-account JSON with project_id", src)
 	}
 	// The oauth2 token fetch uses this client from the context.
 	creds, err := google.CredentialsFromJSON(context.WithValue(ctx, oauth2.HTTPClient, hc), data, fcmScope)
 	if err != nil {
-		return nil, fmt.Errorf("FCM_CREDENTIALS_FILE %q: %w", cfg.FCMCredentialsFile, err)
+		return nil, fmt.Errorf("%s: %w", src, err)
 	}
 	return newFCMWithTokenSource(sa.ProjectID, cfg, hc, creds.TokenSource), nil
 }

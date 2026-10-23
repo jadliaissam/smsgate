@@ -68,6 +68,7 @@ type Config struct {
 	APIKeyTouchInterval time.Duration
 
 	FCMCredentialsFile string
+	FCMCredentialsJSON string // raw service-account JSON; wins over the file
 	FCMEndpoint        string
 	WakeConcurrency    int
 	WakeTimeout        time.Duration
@@ -222,6 +223,7 @@ func (l *loader) config() (Config, error) {
 	c.APIKeyTouchInterval = l.dur("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)
 
 	c.FCMCredentialsFile = l.str("FCM_CREDENTIALS_FILE", c.FCMCredentialsFile)
+	c.FCMCredentialsJSON = l.str("FCM_CREDENTIALS_JSON", c.FCMCredentialsJSON)
 	c.FCMEndpoint = l.str("FCM_ENDPOINT", c.FCMEndpoint)
 	c.WakeConcurrency = l.integer("WAKE_CONCURRENCY", c.WakeConcurrency)
 	c.WakeTimeout = l.dur("WAKE_TIMEOUT", c.WakeTimeout)
