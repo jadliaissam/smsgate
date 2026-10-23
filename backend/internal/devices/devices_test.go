@@ -28,14 +28,14 @@ func reg(code string) map[string]any {
 }
 
 func TestPairWithCode(t *testing.T) {
-	a := apptest.New(t)
+	a := apptest.New(t, func(c *config.Config) { c.PublicURL = "https://sms.example.com/gw" })
 	c := a.Signup(t, "a@example.com")
 	r, m := a.Do("POST", "/app/pairing-codes", nil, ck(c)...)
 	if r.StatusCode != 201 {
 		t.Fatalf("%d %v", r.StatusCode, m)
 	}
 	code := m["code"].(string)
-	if len(code) != 8 || m["expires_at"] == nil || m["qr_payload"] != "smsgate://pair?server="+a.Cfg.PublicURL+"&code="+code {
+	if len(code) != 8 || m["expires_at"] == nil || m["qr_payload"] != "smsgate://pair?server=https%3A%2F%2Fsms.example.com%2Fgw&code="+code {
 		t.Fatalf("%v", m)
 	}
 	// lowercase + whitespace input is normalised

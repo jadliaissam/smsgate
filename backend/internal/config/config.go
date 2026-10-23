@@ -9,8 +9,10 @@ import (
 	"math"
 	"net"
 	"net/mail"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/smsgate/backend/internal/secret"
@@ -77,13 +79,15 @@ type Config struct {
 	SMTPTimeout  time.Duration
 }
 
-// Default returns all defaults; DatabaseURL is empty.
+// devPublicURL is the PUBLIC_URL default under APP_ENV=dev; elsewhere it is required.
+const devPublicURL = "http://localhost:8080"
+
+// Default returns all defaults; DatabaseURL and PublicURL are empty.
 func Default() Config {
 	return Config{
-		Addr:      ":8080",
-		Env:       "prod",
-		PublicURL: "http://localhost:8080",
-		LogLevel:  slog.LevelInfo,
+		Addr:     ":8080",
+		Env:      "prod",
+		LogLevel: slog.LevelInfo,
 
 		DBMaxConns:    10,
 		DBMinConns:    1,
@@ -160,7 +164,11 @@ func (l *loader) config() (Config, error) {
 	c.Addr = l.str("HTTP_ADDR", c.Addr)
 	c.DatabaseURL = l.str("DATABASE_URL", "")
 	c.Env = l.str("APP_ENV", c.Env)
-	c.PublicURL = l.str("PUBLIC_URL", c.PublicURL)
+	defPublic := c.PublicURL
+	if c.Env == "dev" {
+		defPublic = devPublicURL
+	}
+	c.PublicURL = strings.TrimSuffix(l.str("PUBLIC_URL", defPublic), "/")
 	c.LogLevel = l.level("LOG_LEVEL", c.LogLevel)
 
 	c.DBMaxConns = int32(l.intn("DB_MAX_CONNS", int64(c.DBMaxConns), math.MaxInt32))
@@ -307,6 +315,12 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("MSG_TTL_DEFAULT: %s exceeds MSG_TTL_MAX %s", c.TTLDefault, c.TTLMax))
 	}
 
+	if err := validPublicURL(c.PublicURL); err != nil {
+		errs = append(errs, fmt.Errorf("PUBLIC_URL: %w", err))
+	} else if c.PublicURL == "" && c.Env != "dev" {
+		errs = append(errs, errors.New("PUBLIC_URL: required outside APP_ENV=dev (the web app's https origin)"))
+	}
+
 	switch c.Mailer {
 	case "smtp":
 		if c.SMTPHost == "" {
@@ -325,6 +339,31 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("MAILER: must be smtp or log, got %q", c.Mailer))
 	}
 	return errors.Join(errs...)
+}
+
+// validPublicURL accepts "" (checked separately) or an absolute http(s) URL
+// with a host and no user info, query, fragment or trailing slash.
+func validPublicURL(s string) error {
+	if s == "" {
+		return nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https"):
+		return fmt.Errorf("%q: scheme must be http or https", s)
+	case u.Host == "":
+		return fmt.Errorf("%q: host is missing", s)
+	case u.User != nil:
+		return fmt.Errorf("%q: user info is not allowed", s)
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(s, "?#"):
+		return fmt.Errorf("%q: query and fragment are not allowed", s)
+	case strings.HasSuffix(s, "/"):
+		return fmt.Errorf("%q: must not end with /", s)
+	}
+	return nil
 }
 
 // lookup returns the trimmed-free raw value; empty means unset.
