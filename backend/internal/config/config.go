@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
+	"net/mail"
 	"os"
 	"strconv"
 	"time"
@@ -65,6 +67,14 @@ type Config struct {
 	WakeConcurrency    int
 	WakeTimeout        time.Duration
 	FCMMaxIdlePerHost  int
+
+	Mailer       string // "smtp" or "log"
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPTimeout  time.Duration
 }
 
 // Default returns all defaults; DatabaseURL is empty.
@@ -117,6 +127,10 @@ func Default() Config {
 		WakeConcurrency:   64,
 		WakeTimeout:       5 * time.Second,
 		FCMMaxIdlePerHost: 16,
+
+		Mailer:      "smtp",
+		SMTPPort:    587,
+		SMTPTimeout: 10 * time.Second,
 	}
 }
 
@@ -196,16 +210,120 @@ func (l *loader) config() (Config, error) {
 	c.WakeTimeout = l.dur("WAKE_TIMEOUT", c.WakeTimeout)
 	c.FCMMaxIdlePerHost = l.integer("FCM_HTTP_MAX_IDLE_PER_HOST", c.FCMMaxIdlePerHost)
 
+	defMailer := c.Mailer
+	if c.Env == "dev" {
+		defMailer = "log"
+	}
+	c.Mailer = l.str("MAILER", defMailer)
+	c.SMTPHost = l.str("SMTP_HOST", c.SMTPHost)
+	c.SMTPPort = l.integer("SMTP_PORT", c.SMTPPort)
+	c.SMTPUsername = l.str("SMTP_USERNAME", c.SMTPUsername)
+	c.SMTPPassword = l.str("SMTP_PASSWORD", c.SMTPPassword)
+	c.SMTPFrom = l.str("SMTP_FROM", c.SMTPFrom)
+	c.SMTPTimeout = l.dur("SMTP_TIMEOUT", c.SMTPTimeout)
+
 	if l.record {
 		return c, l.err
 	}
 	if c.DatabaseURL == "" && l.err == nil {
 		l.err = errors.New("DATABASE_URL is required")
 	}
+	if l.err == nil {
+		if err := c.Validate(); err != nil {
+			l.err = err
+		}
+	}
 	if l.err != nil {
 		return Config{}, l.err
 	}
 	return c, nil
+}
+
+// Validate checks cross-field and range constraints. Errors name the env var.
+func (c Config) Validate() error {
+	var errs []error
+	min1 := func(env string, v int64) {
+		if v < 1 {
+			errs = append(errs, fmt.Errorf("%s: must be >= 1, got %d", env, v))
+		}
+	}
+	pos := func(env string, v time.Duration) {
+		if v <= 0 {
+			errs = append(errs, fmt.Errorf("%s: must be > 0, got %s", env, v))
+		}
+	}
+	min1("DB_MAX_CONNS", int64(c.DBMaxConns))
+	min1("DB_MIN_CONNS", int64(c.DBMinConns))
+	if c.DBMinConns > c.DBMaxConns {
+		errs = append(errs, fmt.Errorf("DB_MIN_CONNS: %d exceeds DB_MAX_CONNS %d", c.DBMinConns, c.DBMaxConns))
+	}
+	min1("SWEEP_BATCH", int64(c.SweepBatch))
+	min1("PENDING_LIMIT", int64(c.PendingLimit))
+	min1("LIST_LIMIT_DEFAULT", int64(c.ListLimitDefault))
+	min1("LIST_LIMIT_MAX", int64(c.ListLimitMax))
+	if c.ListLimitDefault > c.ListLimitMax {
+		errs = append(errs, fmt.Errorf("LIST_LIMIT_DEFAULT: %d exceeds LIST_LIMIT_MAX %d", c.ListLimitDefault, c.ListLimitMax))
+	}
+	min1("WAKE_CONCURRENCY", int64(c.WakeConcurrency))
+	min1("FCM_HTTP_MAX_IDLE_PER_HOST", int64(c.FCMMaxIdlePerHost))
+	min1("MSG_MAX_SEGMENTS", int64(c.MaxSegments))
+	if c.Argon2.MemoryKiB < 8 {
+		errs = append(errs, fmt.Errorf("ARGON2_MEMORY_KIB: must be >= 8, got %d", c.Argon2.MemoryKiB))
+	}
+	min1("ARGON2_TIME", int64(c.Argon2.Time))
+	min1("ARGON2_THREADS", int64(c.Argon2.Threads))
+	min1("ARGON2_MAX_CONCURRENCY", int64(c.Argon2.MaxConcurrency))
+	min1("PASSWORD_MIN_LEN", int64(c.PasswordMin))
+	if c.PasswordMax < c.PasswordMin {
+		errs = append(errs, fmt.Errorf("PASSWORD_MAX_LEN: %d is below PASSWORD_MIN_LEN %d", c.PasswordMax, c.PasswordMin))
+	}
+	if c.MaxBodyBytes < 1024 {
+		errs = append(errs, fmt.Errorf("MAX_BODY_BYTES: must be >= 1024, got %d", c.MaxBodyBytes))
+	}
+
+	pos("DB_MAX_CONN_IDLE_TIME", c.DBMaxConnIdle)
+	pos("HTTP_READ_HEADER_TIMEOUT", c.ReadHeaderTimeout)
+	pos("HTTP_READ_TIMEOUT", c.ReadTimeout)
+	pos("HTTP_WRITE_TIMEOUT", c.WriteTimeout)
+	pos("HTTP_IDLE_TIMEOUT", c.IdleTimeout)
+	pos("SHUTDOWN_TIMEOUT", c.ShutdownTimeout)
+	pos("MSG_TTL_DEFAULT", c.TTLDefault)
+	pos("MSG_TTL_MIN", c.TTLMin)
+	pos("MSG_TTL_MAX", c.TTLMax)
+	pos("PAIRING_CODE_TTL", c.PairingTTL)
+	pos("DEVICE_ONLINE_WINDOW", c.OnlineWindow)
+	pos("DEVICE_LOST_AFTER", c.DeviceLostAfter)
+	pos("SWEEP_INTERVAL", c.SweepInterval)
+	pos("SESSION_TTL", c.SessionTTL)
+	pos("EMAIL_TOKEN_TTL", c.EmailTokenTTL)
+	pos("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)
+	pos("WAKE_TIMEOUT", c.WakeTimeout)
+	pos("SMTP_TIMEOUT", c.SMTPTimeout)
+	if c.TTLMin > c.TTLDefault {
+		errs = append(errs, fmt.Errorf("MSG_TTL_MIN: %s exceeds MSG_TTL_DEFAULT %s", c.TTLMin, c.TTLDefault))
+	}
+	if c.TTLDefault > c.TTLMax {
+		errs = append(errs, fmt.Errorf("MSG_TTL_DEFAULT: %s exceeds MSG_TTL_MAX %s", c.TTLDefault, c.TTLMax))
+	}
+
+	switch c.Mailer {
+	case "smtp":
+		if c.SMTPHost == "" {
+			errs = append(errs, errors.New("SMTP_HOST: required when MAILER=smtp"))
+		}
+		if c.SMTPFrom == "" {
+			errs = append(errs, errors.New("SMTP_FROM: required when MAILER=smtp"))
+		} else if _, err := mail.ParseAddress(c.SMTPFrom); err != nil {
+			errs = append(errs, fmt.Errorf("SMTP_FROM: %w", err))
+		}
+		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			errs = append(errs, fmt.Errorf("SMTP_PORT: must be 1..65535, got %d", c.SMTPPort))
+		}
+	case "log":
+	default:
+		errs = append(errs, fmt.Errorf("MAILER: must be smtp or log, got %q", c.Mailer))
+	}
+	return errors.Join(errs...)
 }
 
 // lookup returns the trimmed-free raw value; empty means unset.
@@ -288,4 +406,22 @@ func (l *loader) level(key string, def slog.Level) slog.Level {
 		return def
 	}
 	return lv
+}
+
+// HealthURL returns the loopback URL of /healthz derived from HTTP_ADDR only,
+// so the -healthcheck probe works without the rest of the configuration.
+func HealthURL() string { return healthURL(os.Getenv("HTTP_ADDR")) }
+
+func healthURL(addr string) string {
+	if addr == "" {
+		addr = Default().Addr
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://127.0.0.1:8080/healthz"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz"
 }
