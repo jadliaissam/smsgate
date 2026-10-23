@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -10,12 +11,14 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("MAILER", "log")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := Default()
 	d.DatabaseURL = "postgres://x"
+	d.Mailer = "log"
 	if c != d {
 		t.Fatalf("Load != Default+URL:\n%+v\n%+v", c, d)
 	}
@@ -74,6 +77,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("MAILER", "log")
 	t.Setenv("MSG_TTL_MAX", "2h")
 	t.Setenv("SWEEP_BATCH", "10")
 	t.Setenv("COOKIE_SECURE", "false")
@@ -144,7 +148,122 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 42 {
+	if len(v) != 49 {
 		t.Fatalf("only %d vars", len(v))
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cases := []struct {
+		env string
+		mut func(*Config)
+	}{
+		{"DB_MAX_CONNS", func(c *Config) { c.DBMaxConns = 0 }},
+		{"DB_MIN_CONNS", func(c *Config) { c.DBMinConns = 20 }},
+		{"SWEEP_BATCH", func(c *Config) { c.SweepBatch = 0 }},
+		{"PENDING_LIMIT", func(c *Config) { c.PendingLimit = 0 }},
+		{"LIST_LIMIT_DEFAULT", func(c *Config) { c.ListLimitDefault = 0 }},
+		{"LIST_LIMIT_MAX", func(c *Config) { c.ListLimitMax = 0 }},
+		{"WAKE_CONCURRENCY", func(c *Config) { c.WakeConcurrency = 0 }},
+		{"MSG_MAX_SEGMENTS", func(c *Config) { c.MaxSegments = 0 }},
+		{"ARGON2_MEMORY_KIB", func(c *Config) { c.Argon2.MemoryKiB = 7 }},
+		{"ARGON2_TIME", func(c *Config) { c.Argon2.Time = 0 }},
+		{"ARGON2_THREADS", func(c *Config) { c.Argon2.Threads = 0 }},
+		{"ARGON2_MAX_CONCURRENCY", func(c *Config) { c.Argon2.MaxConcurrency = 0 }},
+		{"PASSWORD_MIN_LEN", func(c *Config) { c.PasswordMin = 0 }},
+		{"PASSWORD_MAX_LEN", func(c *Config) { c.PasswordMax = 5 }},
+		{"MAX_BODY_BYTES", func(c *Config) { c.MaxBodyBytes = 1023 }},
+		{"HTTP_READ_TIMEOUT", func(c *Config) { c.ReadTimeout = 0 }},
+		{"SHUTDOWN_TIMEOUT", func(c *Config) { c.ShutdownTimeout = 0 }},
+		{"SWEEP_INTERVAL", func(c *Config) { c.SweepInterval = 0 }},
+		{"SESSION_TTL", func(c *Config) { c.SessionTTL = 0 }},
+		{"MSG_TTL_MIN", func(c *Config) { c.TTLMin = time.Hour }},
+		{"MSG_TTL_DEFAULT", func(c *Config) { c.TTLDefault = 2 * time.Hour }},
+		{"MAILER", func(c *Config) { c.Mailer = "pigeon" }},
+		{"SMTP_HOST", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = ""; c.SMTPFrom = "a@b" }},
+		{"SMTP_FROM", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "" }},
+		{"SMTP_PORT", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "a@b"; c.SMTPPort = 70000 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.env, func(t *testing.T) {
+			c := Default()
+			c.Mailer = "log"
+			tc.mut(&c)
+			err := c.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.env) {
+				t.Fatalf("err = %v, want mention of %s", err, tc.env)
+			}
+		})
+	}
+	c := Default()
+	c.Mailer = "log"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("defaults invalid: %v", err)
+	}
+}
+
+func TestLoadRunsValidate(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("MAILER", "log")
+	t.Setenv("SWEEP_BATCH", "0")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SWEEP_BATCH") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMailerDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SMTP_HOST") {
+		t.Fatalf("prod default smtp without host: err = %v", err)
+	}
+	t.Setenv("APP_ENV", "dev")
+	c, err := Load()
+	if err != nil || c.Mailer != "log" {
+		t.Fatalf("dev: %v %q", err, c.Mailer)
+	}
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("MAILER", "log")
+	if c, err = Load(); err != nil || c.Mailer != "log" {
+		t.Fatalf("explicit log in prod: %v", err)
+	}
+	t.Setenv("MAILER", "smtp")
+	t.Setenv("SMTP_HOST", "mail.example.com")
+	t.Setenv("SMTP_FROM", "SMSGate <no-reply@example.com>")
+	if c, err = Load(); err != nil || c.SMTPPort != 587 || c.SMTPHost != "mail.example.com" {
+		t.Fatalf("smtp: %v %+v", err, c)
+	}
+}
+
+func TestEnvExampleComplete(t *testing.T) {
+	data, err := os.ReadFile("../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		if k, _, ok := strings.Cut(line, "="); ok && k != "" && !strings.ContainsAny(k, " \t") {
+			have[k] = true
+		}
+	}
+	for _, n := range EnvVars() {
+		if !have[n] {
+			t.Errorf(".env.example is missing %s", n)
+		}
+	}
+}
+
+func TestHealthURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"":              "http://127.0.0.1:8080/healthz",
+		":9000":         "http://127.0.0.1:9000/healthz",
+		"0.0.0.0:80":    "http://127.0.0.1:80/healthz",
+		"[::]:7000":     "http://127.0.0.1:7000/healthz",
+		"10.1.2.3:8081": "http://10.1.2.3:8081/healthz",
+		"garbage":       "http://127.0.0.1:8080/healthz",
+	} {
+		if got := healthURL(in); got != want {
+			t.Errorf("healthURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
