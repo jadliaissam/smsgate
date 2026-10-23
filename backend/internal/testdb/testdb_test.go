@@ -39,3 +39,16 @@ func TestParallelClones(t *testing.T) {
 		})
 	}
 }
+
+// Every user_id foreign key is indexed (cascading user deletes, per-user lookups).
+func TestUserForeignKeysIndexed(t *testing.T) {
+	db := testdb.New(t)
+	for _, tbl := range []string{"email_tokens", "sessions", "pairing_codes", "api_keys", "devices"} {
+		var ok bool
+		err := db.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = $1 AND indexdef LIKE '%(user_id%')`, tbl).Scan(&ok)
+		if err != nil || !ok {
+			t.Errorf("%s: no index leading with user_id (%v)", tbl, err)
+		}
+	}
+}

@@ -27,3 +27,23 @@ WHERE s.token_hash = $1 AND s.expires_at > @now;
 
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1;
+
+-- Purge* delete one batch of auth rows that expired (or, for pairing codes,
+-- were used) over an hour ago; the hour of grace absorbs skew between the app
+-- clock that wrote expires_at (R3) and the DB clock. Run by the sweeper.
+-- name: PurgeSessions :execrows
+DELETE FROM sessions WHERE token_hash IN (
+    SELECT token_hash FROM sessions WHERE expires_at < now() - interval '1 hour' LIMIT @batch
+);
+
+-- name: PurgeEmailTokens :execrows
+DELETE FROM email_tokens WHERE token_hash IN (
+    SELECT token_hash FROM email_tokens WHERE expires_at < now() - interval '1 hour' LIMIT @batch
+);
+
+-- name: PurgePairingCodes :execrows
+DELETE FROM pairing_codes WHERE code_hash IN (
+    SELECT code_hash FROM pairing_codes
+    WHERE expires_at < now() - interval '1 hour' OR used_at < now() - interval '1 hour'
+    LIMIT @batch
+);

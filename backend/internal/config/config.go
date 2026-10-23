@@ -54,6 +54,7 @@ type Config struct {
 
 	SweepInterval time.Duration
 	SweepBatch    int
+	PurgeInterval time.Duration
 
 	Argon2      secret.ArgonParams
 	PasswordMin int
@@ -119,6 +120,7 @@ func Default() Config {
 
 		SweepInterval: 2 * time.Second,
 		SweepBatch:    500,
+		PurgeInterval: 10 * time.Minute,
 
 		Argon2:      secret.ArgonParams{MemoryKiB: 19456, Time: 2, Threads: 1, MaxConcurrency: 2, MaxQueue: 32},
 		PasswordMin: 10,
@@ -202,6 +204,7 @@ func (l *loader) config() (Config, error) {
 
 	c.SweepInterval = l.dur("SWEEP_INTERVAL", c.SweepInterval)
 	c.SweepBatch = l.integer("SWEEP_BATCH", c.SweepBatch)
+	c.PurgeInterval = l.dur("PURGE_INTERVAL", c.PurgeInterval)
 
 	c.Argon2.MemoryKiB = uint32(l.intn("ARGON2_MEMORY_KIB", int64(c.Argon2.MemoryKiB), math.MaxUint32))
 	c.Argon2.Time = uint32(l.intn("ARGON2_TIME", int64(c.Argon2.Time), math.MaxUint32))
@@ -309,6 +312,7 @@ func (c Config) Validate() error {
 	pos("DEVICE_ONLINE_WINDOW", c.OnlineWindow)
 	pos("DEVICE_LOST_AFTER", c.DeviceLostAfter)
 	pos("SWEEP_INTERVAL", c.SweepInterval)
+	pos("PURGE_INTERVAL", c.PurgeInterval)
 	pos("SESSION_TTL", c.SessionTTL)
 	pos("EMAIL_TOKEN_TTL", c.EmailTokenTTL)
 	pos("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)

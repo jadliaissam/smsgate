@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -229,5 +230,94 @@ func TestLateReportAfterDeviceLost(t *testing.T) {
 	// The event trail keeps the device_lost failure before the recovery.
 	if f.events(t, sent, "failed") != 1 || f.events(t, sent, "sent") != 1 {
 		t.Fatal("event trail")
+	}
+}
+
+// seedAuthRows inserts sessions, email tokens and pairing codes for the
+// fixture's user: names starting with "old" are past the purge horizon
+// (expired or used over an hour ago), the others must survive.
+func (f *fx) seedAuthRows(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO sessions (token_hash, user_id, expires_at) SELECT v.h, u.id, now() + v.d::interval FROM users u,
+		  (VALUES ('old1','-2 hours'),('old2','-3 hours'),('grace','-30 minutes'),('live','1 hour')) v(h,d)`,
+		`INSERT INTO email_tokens (token_hash, user_id, expires_at) SELECT v.h, u.id, now() + v.d::interval FROM users u,
+		  (VALUES ('old1','-2 hours'),('old2','-90 minutes'),('grace','-10 minutes'),('live','1 day')) v(h,d)`,
+		`INSERT INTO pairing_codes (code_hash, user_id, expires_at, used_at) SELECT v.h, u.id, now() + v.d::interval, now() + v.used::interval FROM users u,
+		  (VALUES ('old1','-2 hours',NULL),('oldused','1 hour','-2 hours'),('grace','-5 minutes',NULL),('justused','1 hour','-1 minute'),('live','5 minutes',NULL)) v(h,d,used)`,
+	} {
+		if _, err := f.app.Pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (f *fx) authRows(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for tbl, col := range map[string]string{"sessions": "token_hash", "email_tokens": "token_hash", "pairing_codes": "code_hash"} {
+		rows, err := f.app.Pool.Query(context.Background(), "SELECT "+col+" FROM "+tbl+" WHERE length("+col+") < 20 ORDER BY 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out[tbl] = append(out[tbl], s)
+		}
+		rows.Close()
+	}
+	return out
+}
+
+func TestPurgeExpiredAuthRows(t *testing.T) {
+	f := setup(t, "p1@example.com")
+	f.seedAuthRows(t)
+	n, err := f.sweeper(1).Purge(context.Background()) // batch 1: drains several batches
+	if err != nil || n != 6 {
+		t.Fatalf("purge %d %v", n, err)
+	}
+	got := f.authRows(t)
+	want := map[string][]string{
+		"sessions":      {"grace", "live"},
+		"email_tokens":  {"grace", "live"},
+		"pairing_codes": {"grace", "justused", "live"},
+	}
+	for tbl, w := range want {
+		if strings.Join(got[tbl], ",") != strings.Join(w, ",") {
+			t.Errorf("%s = %v, want %v", tbl, got[tbl], w)
+		}
+	}
+	if n, err := f.sweeper(100).Purge(context.Background()); err != nil || n != 0 {
+		t.Fatalf("second purge %d %v", n, err)
+	}
+}
+
+func TestRunPurgesEveryPurgeInterval(t *testing.T) {
+	f := setup(t, "p2@example.com")
+	f.seedAuthRows(t)
+	s := f.sweeper(100)
+	s.PurgeInterval = time.Hour // first tick purges, later ticks within the hour do not
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.authRows(t)["sessions"]) != 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("first tick did not purge")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := f.app.Pool.Exec(context.Background(),
+		`INSERT INTO sessions (token_hash, user_id, expires_at) SELECT 'old3', id, now() - interval '2 hours' FROM users`); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // ~10 ticks
+	if s := f.authRows(t)["sessions"]; len(s) != 3 {
+		t.Fatalf("purged again before PurgeInterval: %v", s)
 	}
 }
