@@ -1,0 +1,109 @@
+name: backend
+
+on:
+  push:
+    paths: ["backend/**", "scripts/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", "scripts/**", ".github/workflows/backend.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DB_URL: postgres://smsgate:smsgate@localhost:5432/smsgate?sslmode=disable
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: smsgate
+          POSTGRES_PASSWORD: smsgate
+          POSTGRES_DB: smsgate
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U smsgate"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: sqlc generated code is up to date
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.29.0 generate
+          git diff --exit-code -- internal/db/dbq
+
+      - name: test (race)
+        env:
+          TEST_DATABASE_URL: ${{ env.DB_URL }}
+        run: go test -race -count=1 ./...
+
+      - name: smoke test
+        run: |
+          go build -o /tmp/smsgate ./cmd/smsgate
+          DATABASE_URL="$DB_URL" APP_ENV=dev /tmp/smsgate > /tmp/smsgate.log 2>&1 &
+          for i in $(seq 1 50); do curl -sf localhost:8080/healthz >/dev/null && break; sleep 0.2; done
+          ../scripts/smoke.sh /tmp/smsgate.log || { cat /tmp/smsgate.log; exit 1; }
+
+      - name: container image builds
+        run: docker build -t smsgate-api:ci .
+
+  deploy:
+    # Deploys backend/ (it contains captain-definition + Dockerfile) to CapRover.
+    # Required repository/environment settings:
+    #   secrets.CAPROVER_URL        e.g. https://captain.example.com
+    #   secrets.CAPROVER_APP_TOKEN  App Configs -> Deployment -> "Enable App Token"
+    #   vars.CAPROVER_APP           CapRover app name, e.g. smsgate-api
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: build deploy tarball
+        # captain-definition must sit at the tarball root.
+        run: tar -cf deploy.tar -C backend --exclude=./backend .
+
+      - name: deploy to CapRover
+        env:
+          CAPROVER_URL: ${{ secrets.CAPROVER_URL }}
+          CAPROVER_APP_TOKEN: ${{ secrets.CAPROVER_APP_TOKEN }}
+          CAPROVER_APP: ${{ vars.CAPROVER_APP }}
+        run: |
+          test -n "$CAPROVER_URL" && test -n "$CAPROVER_APP_TOKEN" && test -n "$CAPROVER_APP" \
+            || { echo "CAPROVER_URL, CAPROVER_APP_TOKEN (secrets) and CAPROVER_APP (variable) must be set"; exit 1; }
+          npx --yes caprover@2.4.4 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "$CAPROVER_APP" \
+            --tarFile ./deploy.tar
