@@ -120,7 +120,7 @@ func (s *service) listAPIKeys(w http.ResponseWriter, r *http.Request) error {
 		out[i] = apiKeyJSON{ID: k.ID, Name: k.Name, Prefix: k.Prefix, CreatedAt: k.CreatedAt, LastUsedAt: k.LastUsedAt, RevokedAt: k.RevokedAt}
 	}
 	return httpx.JSON(w, http.StatusOK, struct {
-		Keys []apiKeyJSON `json:"keys"`
+		Data []apiKeyJSON `json:"data"`
 	}{out})
 }
 
