@@ -2,6 +2,7 @@ package testdb_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/smsgate/backend/internal/testdb"
@@ -23,5 +24,18 @@ func TestNewGivesMigratedIsolatedDB(t *testing.T) {
 	}
 	if err := b.QueryRow(ctx, "SELECT count(*) FROM users").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("b users: %d %v", n, err)
+	}
+}
+
+func TestParallelClones(t *testing.T) {
+	for i := range 4 {
+		t.Run(fmt.Sprint("p", i), func(t *testing.T) {
+			t.Parallel()
+			p := testdb.New(t)
+			var n int
+			if err := p.QueryRow(context.Background(), "SELECT 1").Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
