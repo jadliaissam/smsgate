@@ -32,6 +32,9 @@ func New(d Deps) http.Handler {
 		d.Now = time.Now
 	}
 	if d.Mailer == nil {
+		if d.Cfg.Env != "dev" {
+			panic("server: Deps.Mailer is required outside APP_ENV=dev")
+		}
 		d.Mailer = accounts.LogMailer{Log: d.Log}
 	}
 	mux := http.NewServeMux()
