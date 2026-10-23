@@ -54,6 +54,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"DeviceLostAfter", c.DeviceLostAfter, 15 * time.Minute},
 		{"SweepInterval", c.SweepInterval, 2 * time.Second},
 		{"SweepBatch", c.SweepBatch, 500},
+		{"PurgeInterval", c.PurgeInterval, 10 * time.Minute},
 		{"Argon2.MemoryKiB", c.Argon2.MemoryKiB, uint32(19456)},
 		{"Argon2.Time", c.Argon2.Time, uint32(2)},
 		{"Argon2.Threads", c.Argon2.Threads, uint8(1)},
@@ -153,7 +154,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 51 {
+	if len(v) != 52 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -181,6 +182,7 @@ func TestValidate(t *testing.T) {
 		{"HTTP_READ_TIMEOUT", func(c *Config) { c.ReadTimeout = 0 }},
 		{"SHUTDOWN_TIMEOUT", func(c *Config) { c.ShutdownTimeout = 0 }},
 		{"SWEEP_INTERVAL", func(c *Config) { c.SweepInterval = 0 }},
+		{"PURGE_INTERVAL", func(c *Config) { c.PurgeInterval = 0 }},
 		{"SESSION_TTL", func(c *Config) { c.SessionTTL = 0 }},
 		{"MIGRATE_LOCK_TIMEOUT", func(c *Config) { c.MigrateLockTimeout = 0 }},
 		{"MSG_TTL_MIN", func(c *Config) { c.TTLMin = time.Hour }},

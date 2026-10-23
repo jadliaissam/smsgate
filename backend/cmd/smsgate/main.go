@@ -117,6 +117,7 @@ func run() error {
 		defer wg.Done()
 		(&sweeper.Sweeper{
 			Q: q, Log: log, Interval: cfg.SweepInterval, LostAfter: cfg.DeviceLostAfter, Batch: cfg.SweepBatch,
+			PurgeInterval: cfg.PurgeInterval,
 		}).Run(sweepCtx)
 	}()
 

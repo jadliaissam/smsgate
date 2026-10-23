@@ -166,3 +166,50 @@ func (q *Queries) MarkEmailVerified(ctx context.Context, arg MarkEmailVerifiedPa
 	_, err := q.db.Exec(ctx, markEmailVerified, arg.ID, arg.Now)
 	return err
 }
+
+const purgeEmailTokens = `-- name: PurgeEmailTokens :execrows
+DELETE FROM email_tokens WHERE token_hash IN (
+    SELECT token_hash FROM email_tokens WHERE expires_at < now() - interval '1 hour' LIMIT $1
+)
+`
+
+func (q *Queries) PurgeEmailTokens(ctx context.Context, batch int32) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeEmailTokens, batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgePairingCodes = `-- name: PurgePairingCodes :execrows
+DELETE FROM pairing_codes WHERE code_hash IN (
+    SELECT code_hash FROM pairing_codes
+    WHERE expires_at < now() - interval '1 hour' OR used_at < now() - interval '1 hour'
+    LIMIT $1
+)
+`
+
+func (q *Queries) PurgePairingCodes(ctx context.Context, batch int32) (int64, error) {
+	result, err := q.db.Exec(ctx, purgePairingCodes, batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeSessions = `-- name: PurgeSessions :execrows
+DELETE FROM sessions WHERE token_hash IN (
+    SELECT token_hash FROM sessions WHERE expires_at < now() - interval '1 hour' LIMIT $1
+)
+`
+
+// Purge* delete one batch of auth rows that expired (or, for pairing codes,
+// were used) over an hour ago; the hour of grace absorbs skew between the app
+// clock that wrote expires_at (R3) and the DB clock. Run by the sweeper.
+func (q *Queries) PurgeSessions(ctx context.Context, batch int32) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeSessions, batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

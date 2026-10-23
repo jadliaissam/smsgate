@@ -52,6 +52,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `DEVICE_ONLINE_WINDOW` | `2m` | heartbeat age still counted online |
 | `DEVICE_LOST_AFTER` | `15m` | dispatched-but-unreported messages become `device_lost` after this |
 | `SWEEP_INTERVAL` / `SWEEP_BATCH` | `2s` / `500` | expiry sweeper |
+| `PURGE_INTERVAL` | `10m` | how often the sweeper deletes sessions, email tokens and pairing codes that expired (or were used) over an hour ago |
 | `ARGON2_MEMORY_KIB` / `ARGON2_TIME` / `ARGON2_THREADS` | `19456` / `2` / `1` | password hashing cost |
 | `ARGON2_MAX_CONCURRENCY` | `2` | concurrent hashes (bounds memory) |
 | `ARGON2_MAX_QUEUE` | `32` | callers allowed to wait for a hash slot; beyond it signup/login/device login get `503 busy` (`0` = no waiting). Waiters give up when the client disconnects |
