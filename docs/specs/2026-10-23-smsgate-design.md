@@ -22,7 +22,7 @@ All services live in `/Users/eps/projects/aissam/smsgate` as one monorepo (user'
 ```
 smsgate/
   backend/   Go 1.23+, net/http (stdlib mux), pgx + sqlc, goose migrations
-  web/       Vite + React + TS + TanStack Router/Query + Tailwind (+ shadcn/ui)
+  web/       Vite + React + TS + TanStack Router/Query + Tailwind only (no component library)
   android/   Kotlin, Jetpack Compose, Material 3
   deploy/    captain-definition files, Dockerfiles
 ```
@@ -69,6 +69,8 @@ Auth: `Authorization: Bearer sk_live_…`.
 - **UI**: status home (connected, SIMs, today's count), local log of sent messages, settings (always-connected toggle, default SIM, unpair).
 
 ## Dashboard (web)
+Visual direction (user's decision, 2026-10-23): elegant, modern and fully styled; **Tailwind only** for styling (no shadcn/ui or other UI kits); a single consistent color palette defined as Tailwind theme tokens; deliberate use of shadows, rounded surfaces and depth; animations/transitions (page/route transitions, hover/press feedback, skeleton loaders, optimistic updates, toasts) so the UI feels snappy and fast — CSS/Tailwind transitions first, honoring `prefers-reduced-motion`.
+
 Sign up / login / email verify · Overview (usage vs quota, delivery rate) · Devices (pair via QR, online status, SIMs, battery, rename/revoke) · Messages (filterable log, event timeline per message) · API keys · Webhooks (URL, secret, test, delivery log) · Billing (Stripe Checkout + customer portal) · API docs page with curl examples · APK download.
 
 ## Limits, abuse & privacy
