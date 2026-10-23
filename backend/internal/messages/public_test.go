@@ -45,6 +45,17 @@ func (f *fixture) valid() map[string]any {
 	return map[string]any{"device_id": f.device.String(), "to": "+37060000000", "body": "hello"}
 }
 
+func (f *fixture) assertEvents(t *testing.T, id string, want int) {
+	t.Helper()
+	var n int
+	var st string
+	err := f.app.Pool.QueryRow(context.Background(),
+		"SELECT count(*), coalesce(min(status),'') FROM message_events WHERE message_id=$1", id).Scan(&n, &st)
+	if err != nil || n != want || (want > 0 && st != "queued") {
+		t.Fatalf("events for %s: n=%d status=%q err=%v want %d queued", id, n, st, err, want)
+	}
+}
+
 func errCode(m map[string]any) string {
 	e, _ := m["error"].(map[string]any)
 	c, _ := e["code"].(string)
@@ -75,6 +86,7 @@ func TestCreateMessage(t *testing.T) {
 			t.Fatalf("%s should be null, got %v (present=%v)", k, v, ok)
 		}
 	}
+	f.assertEvents(t, m["id"].(string), 1)
 	calls := f.app.Waker.WaitCalls(1, 2*time.Second)
 	if len(calls) != 1 || calls[0].FCMToken != "fcm-test" || calls[0].MessageID.String() != m["id"] || calls[0].DeviceID != f.device {
 		t.Fatalf("wake calls %+v", calls)
@@ -110,6 +122,10 @@ func TestCreateValidation(t *testing.T) {
 		{"460 chars", func(b map[string]any) { b["body"] = strings.Repeat("a", 460) }, 422, "body_too_long"},
 		{"ttl 5", func(b map[string]any) { b["ttl_seconds"] = 5 }, 422, "invalid_ttl"},
 		{"ttl 3601", func(b map[string]any) { b["ttl_seconds"] = 3601 }, 422, "invalid_ttl"},
+		{"ttl 0", func(b map[string]any) { b["ttl_seconds"] = 0 }, 422, "invalid_ttl"},
+		{"ttl overflow", func(b map[string]any) { b["ttl_seconds"] = int64(1)<<55 + 300 }, 422, "invalid_ttl"},
+		{"ttl negative", func(b map[string]any) { b["ttl_seconds"] = -1 }, 422, "invalid_ttl"},
+		{"client_ref 129 runes", func(b map[string]any) { b["client_ref"] = strings.Repeat("😀", 129) }, 422, "invalid_client_ref"},
 		{"sim 7", func(b map[string]any) { b["sim_slot"] = 7 }, 422, "invalid_sim_slot"},
 		{"client_ref long", func(b map[string]any) { b["client_ref"] = strings.Repeat("x", 129) }, 422, "invalid_client_ref"},
 		{"bad device id", func(b map[string]any) { b["device_id"] = "nope" }, 404, "device_not_found"},
@@ -193,6 +209,7 @@ func TestIdempotentReplay(t *testing.T) {
 	if n := len(f.app.Waker.Calls()); n != 1 {
 		t.Fatalf("wakes: %d", n)
 	}
+	f.assertEvents(t, m1["id"].(string), 1)
 	// another user may reuse the same key
 	c2 := f.app.Signup(t, "idem2@example.com")
 	key2 := f.app.APIKey(t, c2)
@@ -247,6 +264,23 @@ func TestIdempotencyMismatch(t *testing.T) {
 	b["body"] = "different"
 	st, m := f.create(b, "Idempotency-Key", "k")
 	if st != 409 || errCode(m) != "idempotency_mismatch" {
+		t.Fatalf("%d %v", st, m)
+	}
+}
+
+func TestIdempotencyKeyInvalidUTF8(t *testing.T) {
+	f := setup(t, "utf@example.com")
+	st, m := f.create(f.valid(), "Idempotency-Key", "bad\xffkey")
+	if st != 422 || errCode(m) != "invalid_idempotency_key" {
+		t.Fatalf("%d %v", st, m)
+	}
+}
+
+func TestClientRef128RunesOK(t *testing.T) {
+	f := setup(t, "cr@example.com")
+	b := f.valid()
+	b["client_ref"] = strings.Repeat("😀", 128)
+	if st, m := f.create(b); st != 202 {
 		t.Fatalf("%d %v", st, m)
 	}
 }
