@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/smsgate/backend/internal/accounts"
@@ -173,4 +174,33 @@ func (a *App) APIKey(t *testing.T, cookie *http.Cookie) string {
 	}
 	k, _ := m["key"].(string)
 	return k
+}
+
+// PairDevice creates a pairing code for the user owning cookie and registers a
+// device with it (fcm_token "fcm-test", one SIM), returning its id and token.
+func (a *App) PairDevice(t *testing.T, cookie *http.Cookie) (uuid.UUID, string) {
+	t.Helper()
+	ck := "Cookie"
+	cv := cookie.Name + "=" + cookie.Value
+	r, m := a.Do("POST", "/app/pairing-codes", nil, ck, cv)
+	if r.StatusCode != 201 {
+		t.Fatalf("pairing code: %d %v", r.StatusCode, m)
+	}
+	code, _ := m["code"].(string)
+	r, m = a.Do("POST", "/device/v1/register", map[string]any{
+		"pairing_code": code,
+		"name":         "Test Phone",
+		"fcm_token":    "fcm-test",
+		"app_version":  "1.0.0",
+		"sims":         []map[string]any{{"slot": 0, "subscription_id": 1, "carrier": "Test"}},
+	})
+	if r.StatusCode != 201 {
+		t.Fatalf("register: %d %v", r.StatusCode, m)
+	}
+	id, err := uuid.Parse(m["device_id"].(string))
+	if err != nil {
+		t.Fatalf("device_id: %v", err)
+	}
+	tok, _ := m["device_token"].(string)
+	return id, tok
 }

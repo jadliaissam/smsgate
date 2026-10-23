@@ -11,6 +11,7 @@ import (
 	"github.com/smsgate/backend/internal/accounts"
 	"github.com/smsgate/backend/internal/config"
 	"github.com/smsgate/backend/internal/db/dbq"
+	"github.com/smsgate/backend/internal/devices"
 	"github.com/smsgate/backend/internal/httpx"
 	"github.com/smsgate/backend/internal/push"
 	"github.com/smsgate/backend/internal/secret"
@@ -47,12 +48,15 @@ func New(d Deps) http.Handler {
 		}{true})
 	}))
 	q := dbq.New(d.Pool)
-	hasher := secret.NewHasher(d.Cfg.Argon2) // shared by accounts and (later) device pairing
-	if err := accounts.Routes(mux, accounts.Deps{
-		Pool: d.Pool, Q: q, Hasher: hasher, Mailer: d.Mailer, Cfg: d.Cfg, Log: d.Log, Now: d.Now,
-	}); err != nil {
-		panic("server: accounts routes: " + err.Error()) // only if crypto/rand fails at startup
+	hasher := secret.NewHasher(d.Cfg.Argon2)
+	auth, err := accounts.NewAuthenticator(q, hasher)
+	if err != nil {
+		panic("server: authenticator: " + err.Error()) // only if crypto/rand fails at startup
 	}
+	accounts.Routes(mux, accounts.Deps{
+		Pool: d.Pool, Q: q, Hasher: hasher, Auth: auth, Mailer: d.Mailer, Cfg: d.Cfg, Log: d.Log, Now: d.Now,
+	})
+	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now})
 	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"
 	// matches every method, a wrong method on a known path also yields this 404
 	// rather than the mux's plain-text 405 (accepted for now).
