@@ -94,8 +94,8 @@ func (s *service) createAPIKey(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if u.EmailVerifiedAt == nil {
-		return &httpx.Error{Status: http.StatusForbidden, Code: "email_not_verified", Message: "verify your email before creating API keys"}
+	if err := RequireVerified(u); err != nil {
+		return err
 	}
 	key := secret.Token(keyPrefix)
 	row, err := s.Q.CreateAPIKey(ctx, dbq.CreateAPIKeyParams{
