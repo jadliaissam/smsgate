@@ -116,6 +116,10 @@ type Service struct {
 	cfg   config.Config
 	log   *slog.Logger
 
+	// OnStatus, when set, is called synchronously after each real device status
+	// transition (never for no-op retries). Set it before serving requests.
+	OnStatus func(ctx context.Context, m Message)
+
 	sem chan struct{} // bounds concurrent wake goroutines (cfg.WakeConcurrency)
 	wg  sync.WaitGroup
 }

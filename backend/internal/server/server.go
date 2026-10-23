@@ -65,6 +65,7 @@ func New(d Deps) http.Handler {
 		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
 	}
 	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now))
+	messages.DeviceRoutes(mux, d.Messages, devices.RequireDevice(q))
 	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"
 	// matches every method, a wrong method on a known path also yields this 404
 	// rather than the mux's plain-text 405 (accepted for now).
