@@ -54,6 +54,26 @@ func healthcheck(url string, timeout time.Duration) error {
 	return nil
 }
 
+// signalContext is cancelled by the first SIGINT/SIGTERM (graceful shutdown).
+// It then stops catching signals, so a second one terminates the process
+// immediately instead of waiting for the shutdown budget.
+// Handling is released before ctx is cancelled, so no second signal can slip
+// in between.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+		signal.Stop(ch)
+		cancel()
+	}()
+	return ctx, cancel
+}
+
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -62,7 +82,7 @@ func run() error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	log.Info("smsgate starting", "addr", cfg.Addr, "env", cfg.Env)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 
 	if err := db.Migrate(ctx, cfg.DatabaseURL, cfg.MigrateLockTimeout); err != nil {
