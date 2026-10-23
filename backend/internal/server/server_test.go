@@ -16,3 +16,12 @@ func TestHealthz(t *testing.T) {
 		t.Fatal("no request id")
 	}
 }
+
+func TestUnknownRouteJSON(t *testing.T) {
+	a := apptest.New(t)
+	resp, body := a.Do("GET", "/nope", nil)
+	e, _ := body["error"].(map[string]any)
+	if resp.StatusCode != 404 || e["code"] != "route_not_found" {
+		t.Fatalf("%d %v", resp.StatusCode, body)
+	}
+}
