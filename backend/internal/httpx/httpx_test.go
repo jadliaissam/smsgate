@@ -2,8 +2,8 @@ package httpx_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +20,7 @@ type body struct {
 func decodeErr(t *testing.T, payload string, max int64) *httpx.Error {
 	t.Helper()
 	r := httptest.NewRequest("POST", "/", strings.NewReader(payload))
+	r.Header.Set("Content-Type", "application/json")
 	var dst body
 	err := httpx.Decode(httptest.NewRecorder(), r, &dst, max)
 	var he *httpx.Error
@@ -30,10 +31,30 @@ func decodeErr(t *testing.T, payload string, max int64) *httpx.Error {
 }
 
 func TestDecodeOK(t *testing.T) {
-	r := httptest.NewRequest("POST", "/", strings.NewReader(`{"a":"x"}`))
-	var dst body
-	if err := httpx.Decode(httptest.NewRecorder(), r, &dst, 100); err != nil || dst.A != "x" {
-		t.Fatalf("%v %+v", err, dst)
+	for _, ct := range []string{"application/json", "application/json; charset=utf-8", "Application/JSON;charset=UTF-8", " application/json "} {
+		r := httptest.NewRequest("POST", "/", strings.NewReader(`{"a":"x"}`))
+		r.Header.Set("Content-Type", ct)
+		var dst body
+		if err := httpx.Decode(httptest.NewRecorder(), r, &dst, 100); err != nil || dst.A != "x" {
+			t.Fatalf("%q: %v %+v", ct, err, dst)
+		}
+	}
+}
+
+// A cross-site form or fetch without preflight can only send "simple" content
+// types; requiring application/json makes cookie-authenticated POSTs CSRF-safe.
+func TestDecodeRequiresJSONContentType(t *testing.T) {
+	for _, ct := range []string{"", "text/plain", "text/plain; charset=utf-8", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonp", "application/json-seq"} {
+		r := httptest.NewRequest("POST", "/", strings.NewReader(`{"a":"x"}`))
+		if ct != "" {
+			r.Header.Set("Content-Type", ct)
+		}
+		var dst body
+		err := httpx.Decode(httptest.NewRecorder(), r, &dst, 100)
+		var he *httpx.Error
+		if !errors.As(err, &he) || he.Status != 415 || he.Code != "unsupported_media_type" || dst.A != "" {
+			t.Fatalf("%q: %v %+v", ct, err, dst)
+		}
 	}
 }
 
@@ -90,12 +111,17 @@ func TestHandleHidesInternalError(t *testing.T) {
 }
 
 func TestHandlePanicRecovered(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
 	h := httpx.RequestID(httpx.Recover(log)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { panic("kaboom") })))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-	if rec.Code != 500 || strings.Contains(rec.Body.String(), "kaboom") {
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "kaboom") || strings.Contains(rec.Body.String(), "goroutine") {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	// The stack trace is logged (never sent) and points at the panicking frame.
+	if l := logs.String(); !strings.Contains(l, "kaboom") || !strings.Contains(l, "stack=") || !strings.Contains(l, "TestHandlePanicRecovered") {
+		t.Fatalf("log lacks stack: %s", l)
 	}
 }
 
@@ -131,5 +157,20 @@ func TestAccessLogUsesPattern(t *testing.T) {
 	out := logs.String()
 	if !strings.Contains(out, "GET /items/{id}") || strings.Contains(out, "/items/42") || !strings.Contains(out, "status=201") {
 		t.Fatal(out)
+	}
+}
+
+func TestHandleCancelledRequestNotLoggedAsError(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil)) // info level: debug dropped
+	h := httpx.Recover(log)(httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
+		return r.Context().Err()
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/", nil).WithContext(ctx))
+	if rec.Code != 503 || logs.Len() != 0 {
+		t.Fatalf("%d %q", rec.Code, logs.String())
 	}
 }
