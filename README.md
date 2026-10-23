@@ -33,7 +33,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `DATABASE_URL` | required | Postgres connection URL |
 | `HTTP_ADDR` | `:8080` | listen address |
 | `APP_ENV` | `prod` | `dev` enables LogMailer default and non-secure cookie default |
-| `PUBLIC_URL` | `http://localhost:8080` | external base URL (verify links, pairing QR) |
+| `PUBLIC_URL` | required (`http://localhost:8080` when `APP_ENV=dev`) | the **web app's** public origin, e.g. `https://sms.example.com`: verify links point at its SPA route `/verify` and the pairing QR carries it as the server address. The web app's nginx proxies `/app`, `/v1`, `/device` and `/healthz` to this API on the same origin. Must be `http(s)://host[:port][/path]` without query or fragment; one trailing `/` is trimmed |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_MAX_CONNS` / `DB_MIN_CONNS` | `10` / `1` | pool size |
 | `DB_MAX_CONN_IDLE_TIME` | `5m` | idle connection lifetime |

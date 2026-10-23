@@ -2,6 +2,7 @@ package devices
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,7 +35,7 @@ func (s *service) createPairingCode(w http.ResponseWriter, r *http.Request) erro
 		Code      string    `json:"code"`
 		ExpiresAt time.Time `json:"expires_at"`
 		QRPayload string    `json:"qr_payload"`
-	}{code, exp, "smsgate://pair?server=" + s.Cfg.PublicURL + "&code=" + code})
+	}{code, exp, "smsgate://pair?server=" + url.QueryEscape(s.Cfg.PublicURL) + "&code=" + code})
 }
 
 type registerReq struct {

@@ -12,6 +12,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
 	t.Setenv("MAILER", "log")
+	t.Setenv("PUBLIC_URL", "https://sms.example.com")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -19,6 +20,7 @@ func TestLoadDefaults(t *testing.T) {
 	d := Default()
 	d.DatabaseURL = "postgres://x"
 	d.Mailer = "log"
+	d.PublicURL = "https://sms.example.com"
 	if c != d {
 		t.Fatalf("Load != Default+URL:\n%+v\n%+v", c, d)
 	}
@@ -28,7 +30,7 @@ func TestLoadDefaults(t *testing.T) {
 	}{
 		{"Addr", c.Addr, ":8080"},
 		{"Env", c.Env, "prod"},
-		{"PublicURL", c.PublicURL, "http://localhost:8080"},
+		{"PublicURL", c.PublicURL, "https://sms.example.com"},
 		{"LogLevel", c.LogLevel, slog.LevelInfo},
 		{"DBMaxConns", c.DBMaxConns, int32(10)},
 		{"DBMinConns", c.DBMinConns, int32(1)},
@@ -78,6 +80,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("PUBLIC_URL", "https://sms.example.com")
 	t.Setenv("MAILER", "log")
 	t.Setenv("MSG_TTL_MAX", "2h")
 	t.Setenv("SWEEP_BATCH", "10")
@@ -184,11 +187,13 @@ func TestValidate(t *testing.T) {
 		{"SMTP_HOST", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = ""; c.SMTPFrom = "a@b" }},
 		{"SMTP_FROM", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "" }},
 		{"SMTP_PORT", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "a@b"; c.SMTPPort = 70000 }},
+		{"PUBLIC_URL", func(c *Config) { c.PublicURL = "" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {
 			c := Default()
 			c.Mailer = "log"
+			c.PublicURL = "https://sms.example.com"
 			tc.mut(&c)
 			err := c.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.env) {
@@ -198,6 +203,7 @@ func TestValidate(t *testing.T) {
 	}
 	c := Default()
 	c.Mailer = "log"
+	c.PublicURL = "https://sms.example.com"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("defaults invalid: %v", err)
 	}
@@ -224,6 +230,7 @@ func TestMailerDefaults(t *testing.T) {
 	}
 	t.Setenv("APP_ENV", "prod")
 	t.Setenv("MAILER", "log")
+	t.Setenv("PUBLIC_URL", "https://sms.example.com")
 	if c, err = Load(); err != nil || c.Mailer != "log" {
 		t.Fatalf("explicit log in prod: %v", err)
 	}
@@ -265,6 +272,42 @@ func TestHealthURL(t *testing.T) {
 	} {
 		if got := healthURL(in); got != want {
 			t.Errorf("healthURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPublicURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("MAILER", "log")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL") {
+		t.Fatalf("prod without PUBLIC_URL: err = %v", err)
+	}
+	t.Setenv("APP_ENV", "dev")
+	if c, err := Load(); err != nil || c.PublicURL != "http://localhost:8080" {
+		t.Fatalf("dev default: %q %v", c.PublicURL, err)
+	}
+	t.Setenv("APP_ENV", "prod")
+	for in, want := range map[string]string{
+		"https://sms.example.com":  "https://sms.example.com",
+		"https://sms.example.com/": "https://sms.example.com",
+		"https://example.com/sms/": "https://example.com/sms",
+		"http://10.0.0.5:8080":     "http://10.0.0.5:8080",
+		"HTTPS://Sms.Example.com/": "HTTPS://Sms.Example.com",
+	} {
+		t.Setenv("PUBLIC_URL", in)
+		c, err := Load()
+		if err != nil || c.PublicURL != want {
+			t.Errorf("%q: got %q, %v; want %q", in, c.PublicURL, err, want)
+		}
+	}
+	for _, bad := range []string{
+		"sms.example.com", "ftp://sms.example.com", "https://", "https:///path",
+		"https://sms.example.com/?x=1", "https://sms.example.com/#frag", "https://sms.example.com//",
+		"://nope", "https://user:pw@sms.example.com",
+	} {
+		t.Setenv("PUBLIC_URL", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL") {
+			t.Errorf("%q accepted: %v", bad, err)
 		}
 	}
 }

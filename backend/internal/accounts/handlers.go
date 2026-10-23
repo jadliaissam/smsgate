@@ -77,7 +77,7 @@ func (s *service) signup(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	link := strings.TrimRight(s.Cfg.PublicURL, "/") + "/verify?token=" + url.QueryEscape(tok)
+	link := s.Cfg.PublicURL + "/verify?token=" + url.QueryEscape(tok)
 	if err := s.Mailer.Send(ctx, u.Email, "Verify your SMSGate email", "Confirm your email: "+link); err != nil {
 		// The account exists; do not leak the failure as a signup error.
 		s.Log.Error("send verification email", "user_id", u.ID, "err", err)

@@ -45,6 +45,7 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Env = "dev"
+	cfg.PublicURL = "http://localhost:8080"
 	for _, o := range opts {
 		o(&cfg)
 	}
