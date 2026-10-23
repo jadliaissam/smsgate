@@ -51,9 +51,9 @@ func (s *service) signup(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Unprocessable("weak_password", "password length is out of range")
 	}
 	ctx := r.Context()
-	hash, err := s.Hasher.Hash(in.Password)
+	hash, err := s.Hasher.Hash(ctx, in.Password)
 	if err != nil {
-		return err
+		return HashErr(err)
 	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
