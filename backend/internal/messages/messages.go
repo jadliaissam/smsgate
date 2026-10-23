@@ -216,7 +216,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	}
 	m := FromRow(dbq.Message(row))
 	if dev.FcmToken != nil && *dev.FcmToken != "" {
-		s.wake(push.WakeTarget{DeviceID: in.DeviceID, FCMToken: *dev.FcmToken, MessageID: m.ID})
+		s.wake(push.WakeTarget{DeviceID: in.DeviceID, FCMToken: *dev.FcmToken, MessageID: m.ID, ExpiresAt: m.ExpiresAt})
 	}
 	return m, true, nil
 }
@@ -246,8 +246,18 @@ func (s *Service) wake(t push.WakeTarget) {
 }
 
 // onWakeErr is the seam for wake failures (never surfaced to the API caller).
-// Task 10 extends it with push.ErrTokenInvalid handling (token invalidation).
-func (s *Service) onWakeErr(_ context.Context, t push.WakeTarget, err error) {
+// A rejected FCM token is cleared (only if still the one used) so we stop
+// pushing to it; the device sets a new one on its next registration/refresh.
+func (s *Service) onWakeErr(ctx context.Context, t push.WakeTarget, err error) {
+	if errors.Is(err, push.ErrTokenInvalid) {
+		tok := t.FCMToken
+		if cerr := s.q.ClearFCMToken(ctx, dbq.ClearFCMTokenParams{ID: t.DeviceID, FcmToken: &tok}); cerr != nil {
+			s.log.Warn("clear fcm token failed", "device_id", t.DeviceID, "err", cerr)
+			return
+		}
+		s.log.Info("fcm token invalid, cleared", "device_id", t.DeviceID)
+		return
+	}
 	s.log.Warn("wake failed", "device_id", t.DeviceID, "message_id", t.MessageID, "err", err)
 }
 

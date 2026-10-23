@@ -3,6 +3,7 @@ package push
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -14,7 +15,19 @@ type WakeTarget struct {
 	DeviceID  uuid.UUID
 	FCMToken  string
 	MessageID uuid.UUID
+	// ExpiresAt is when the message expires; it bounds the push's time-to-live.
+	ExpiresAt time.Time
 }
+
+// ErrTokenInvalid means the push service rejected the device's FCM token
+// (unregistered or malformed); callers should drop it.
+var ErrTokenInvalid = errors.New("push: fcm token invalid")
+
+// Noop is a Waker that does nothing (used when FCM is not configured).
+type Noop struct{}
+
+// Wake returns nil.
+func (Noop) Wake(context.Context, WakeTarget) error { return nil }
 
 // Waker sends a wake-up push to a device.
 type Waker interface {

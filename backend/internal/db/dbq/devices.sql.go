@@ -30,6 +30,21 @@ func (q *Queries) ConsumePairingCode(ctx context.Context, arg ConsumePairingCode
 	return user_id, err
 }
 
+const clearFCMToken = `-- name: ClearFCMToken :exec
+UPDATE devices SET fcm_token = NULL WHERE id = $1 AND fcm_token = $2
+`
+
+type ClearFCMTokenParams struct {
+	ID       uuid.UUID
+	FcmToken *string
+}
+
+// Only clears the token that FCM rejected, so a freshly registered one survives.
+func (q *Queries) ClearFCMToken(ctx context.Context, arg ClearFCMTokenParams) error {
+	_, err := q.db.Exec(ctx, clearFCMToken, arg.ID, arg.FcmToken)
+	return err
+}
+
 const createDevice = `-- name: CreateDevice :exec
 INSERT INTO devices (id, user_id, name, token_hash, fcm_token, sims, app_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
