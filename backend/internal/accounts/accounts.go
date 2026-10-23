@@ -76,24 +76,18 @@ type Deps struct {
 	Pool   *pgxpool.Pool
 	Q      *dbq.Queries
 	Hasher *secret.Hasher
+	Auth   *Authenticator
 	Mailer Mailer
 	Cfg    config.Config
 	Log    *slog.Logger
 	Now    func() time.Time
 }
 
-type service struct {
-	Deps
-	dummyHash string // verified against for unknown emails to equalize timing
-}
+type service struct{ Deps }
 
 // Routes registers the /app account endpoints on mux.
-func Routes(mux *http.ServeMux, d Deps) error {
-	dummy, err := d.Hasher.Hash("dummy-password-for-timing")
-	if err != nil {
-		return err
-	}
-	s := &service{Deps: d, dummyHash: dummy}
+func Routes(mux *http.ServeMux, d Deps) {
+	s := &service{Deps: d}
 	mux.Handle("POST /app/signup", handle(s.signup))
 	mux.Handle("POST /app/verify", handle(s.verify))
 	mux.Handle("POST /app/login", handle(s.login))
@@ -103,5 +97,4 @@ func Routes(mux *http.ServeMux, d Deps) error {
 	mux.Handle("POST /app/api-keys", sess(handle(s.createAPIKey)))
 	mux.Handle("GET /app/api-keys", sess(handle(s.listAPIKeys)))
 	mux.Handle("DELETE /app/api-keys/{id}", sess(handle(s.revokeAPIKey)))
-	return nil
 }

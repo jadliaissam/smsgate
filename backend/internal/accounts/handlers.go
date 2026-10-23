@@ -128,16 +128,9 @@ func (s *service) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	ctx := r.Context()
-	u, err := s.Q.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(in.Email)))
+	u, err := s.Auth.Authenticate(ctx, in.Email, in.Password)
 	if err != nil {
-		if !isNoRows(err) {
-			return err
-		}
-		s.Hasher.Check(in.Password, s.dummyHash)
-		return invalidCredentials()
-	}
-	if !s.Hasher.Check(in.Password, u.PasswordHash) {
-		return invalidCredentials()
+		return err
 	}
 	tok := secret.Token("")
 	ttl := s.Cfg.SessionTTL
@@ -149,10 +142,6 @@ func (s *service) login(w http.ResponseWriter, r *http.Request) error {
 	s.setCookie(w, tok, int(ttl.Seconds()))
 	w.WriteHeader(http.StatusNoContent)
 	return nil
-}
-
-func invalidCredentials() *httpx.Error {
-	return &httpx.Error{Status: http.StatusUnauthorized, Code: "invalid_credentials", Message: "email or password is incorrect"}
 }
 
 func (s *service) logout(w http.ResponseWriter, r *http.Request) error {
