@@ -36,6 +36,12 @@ func New(d Deps) http.Handler {
 			OK bool `json:"ok"`
 		}{true})
 	}))
+	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"
+	// matches every method, a wrong method on a known path also yields this 404
+	// rather than the mux's plain-text 405 (accepted for now).
+	mux.Handle("/", httpx.Handle(func(http.ResponseWriter, *http.Request) error {
+		return httpx.NotFound("route_not_found")
+	}))
 	var h http.Handler = mux
 	h = httpx.AccessLog(d.Log)(h)
 	h = httpx.Recover(d.Log)(h)
