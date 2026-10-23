@@ -70,8 +70,26 @@ func (q *Queries) GetMessageByIdem(ctx context.Context, arg GetMessageByIdemPara
 	return i, err
 }
 
+const getMessageCursor = `-- name: GetMessageCursor :one
+SELECT created_at FROM messages WHERE id = $1 AND user_id = $2
+`
+
+type GetMessageCursorParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// GetMessageCursor resolves a pagination cursor (message id) to its created_at.
+func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getMessageCursor, arg.ID, arg.UserID)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const getMessageForUser = `-- name: GetMessageForUser :one
-SELECT id, user_id, device_id, sim_slot, to_number, body, status, expires_at, client_ref, idempotency_key, request_hash, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM messages WHERE id = $1 AND user_id = $2
+SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.status, m.expires_at, m.client_ref, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at
+FROM messages m WHERE m.id = $1 AND m.user_id = $2
 `
 
 type GetMessageForUserParams struct {
@@ -79,21 +97,37 @@ type GetMessageForUserParams struct {
 	UserID uuid.UUID
 }
 
-func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserParams) (Message, error) {
+type GetMessageForUserRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+}
+
+// Public reads never load body.
+func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserParams) (GetMessageForUserRow, error) {
 	row := q.db.QueryRow(ctx, getMessageForUser, arg.ID, arg.UserID)
-	var i Message
+	var i GetMessageForUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.DeviceID,
 		&i.SimSlot,
 		&i.ToNumber,
-		&i.Body,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ClientRef,
-		&i.IdempotencyKey,
-		&i.RequestHash,
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.CreatedAt,
@@ -197,15 +231,14 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (I
 }
 
 const listMessages = `-- name: ListMessages :many
-SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.body, m.status, m.expires_at, m.client_ref, m.idempotency_key, m.request_hash, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at FROM messages m
+SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.status, m.expires_at, m.client_ref, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at
+FROM messages m
 WHERE m.user_id = $1
   AND ($2::uuid IS NULL OR m.device_id = $2)
   AND ($3::text IS NULL OR m.status = $3)
   AND ($4::timestamptz IS NULL OR m.created_at >= $4)
-  AND ($5::uuid IS NULL OR (m.created_at, m.id) < (
-        SELECT c.created_at, c.id FROM messages c WHERE c.id = $5 AND c.user_id = $1))
 ORDER BY m.created_at DESC, m.id DESC
-LIMIT $6
+LIMIT $5
 `
 
 type ListMessagesParams struct {
@@ -213,41 +246,139 @@ type ListMessagesParams struct {
 	DeviceID *uuid.UUID
 	Status   *string
 	Since    *time.Time
-	Before   *uuid.UUID
 	RowLimit int32
 }
 
-// ListMessages: keyset pagination on (created_at desc, id desc); the cursor is
-// the id of the last row of the previous page. A cursor that is not the
-// caller's message yields an empty page.
-func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]Message, error) {
+type ListMessagesRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+}
+
+// ListMessages: first page; ordered by (created_at desc, id desc), served by
+// messages_user_created_id_idx.
+func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]ListMessagesRow, error) {
 	rows, err := q.db.Query(ctx, listMessages,
 		arg.UserID,
 		arg.DeviceID,
 		arg.Status,
 		arg.Since,
-		arg.Before,
 		arg.RowLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Message
+	var items []ListMessagesRow
 	for rows.Next() {
-		var i Message
+		var i ListMessagesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
 			&i.DeviceID,
 			&i.SimSlot,
 			&i.ToNumber,
-			&i.Body,
 			&i.Status,
 			&i.ExpiresAt,
 			&i.ClientRef,
-			&i.IdempotencyKey,
-			&i.RequestHash,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.DispatchedAt,
+			&i.SentAt,
+			&i.DeliveredAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMessagesBefore = `-- name: ListMessagesBefore :many
+SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.status, m.expires_at, m.client_ref, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at
+FROM messages m
+WHERE m.user_id = $1
+  AND (m.created_at, m.id) < ($2::timestamptz, $3::uuid)
+  AND ($4::uuid IS NULL OR m.device_id = $4)
+  AND ($5::text IS NULL OR m.status = $5)
+  AND ($6::timestamptz IS NULL OR m.created_at >= $6)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $7
+`
+
+type ListMessagesBeforeParams struct {
+	UserID   uuid.UUID
+	BeforeAt time.Time
+	BeforeID uuid.UUID
+	DeviceID *uuid.UUID
+	Status   *string
+	Since    *time.Time
+	RowLimit int32
+}
+
+type ListMessagesBeforeRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+}
+
+// ListMessagesBefore: next pages. The cursor is passed as (created_at, id) so
+// the row comparison is a sargable index range condition.
+func (q *Queries) ListMessagesBefore(ctx context.Context, arg ListMessagesBeforeParams) ([]ListMessagesBeforeRow, error) {
+	rows, err := q.db.Query(ctx, listMessagesBefore,
+		arg.UserID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.DeviceID,
+		arg.Status,
+		arg.Since,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMessagesBeforeRow
+	for rows.Next() {
+		var i ListMessagesBeforeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.DeviceID,
+			&i.SimSlot,
+			&i.ToNumber,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.ClientRef,
 			&i.ErrorCode,
 			&i.ErrorMessage,
 			&i.CreatedAt,

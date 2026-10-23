@@ -27,7 +27,7 @@ type createReq struct {
 	SIMSlot    *int   `json:"sim_slot"`
 	To         string `json:"to"`
 	Body       string `json:"body"`
-	TTLSeconds int    `json:"ttl_seconds"`
+	TTLSeconds *int   `json:"ttl_seconds"`
 	ClientRef  string `json:"client_ref"`
 }
 
@@ -66,7 +66,7 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) error {
 		}
 		return err
 	}
-	return httpx.JSON(w, http.StatusOK, FromRow(row))
+	return httpx.JSON(w, http.StatusOK, fromPub(pubRow(row)))
 }
 
 type listResp struct {
@@ -78,6 +78,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) error {
 	qv := r.URL.Query()
 	p := dbq.ListMessagesParams{UserID: accounts.UserID(r.Context())}
 	limit := s.cfg.ListLimitDefault
+	var before *uuid.UUID
 	if v := qv.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > s.cfg.ListLimitMax {
@@ -110,12 +111,38 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return httpx.Unprocessable("invalid_before", "before must be a message id")
 		}
-		p.Before = &id
+		before = &id
 	}
-	p.RowLimit = int32(limit + 1) // one extra row tells whether another page exists
-	rows, err := s.q.ListMessages(r.Context(), p)
-	if err != nil {
-		return err
+	rowLimit := int32(limit + 1) // one extra row tells whether another page exists
+	var rows []pubRow
+	if before != nil {
+		at, err := s.q.GetMessageCursor(r.Context(), dbq.GetMessageCursorParams{ID: *before, UserID: p.UserID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) { // not the caller's message: empty page
+				return httpx.JSON(w, http.StatusOK, listResp{Data: []Message{}})
+			}
+			return err
+		}
+		res, err := s.q.ListMessagesBefore(r.Context(), dbq.ListMessagesBeforeParams{
+			UserID: p.UserID, BeforeAt: at, BeforeID: *before, DeviceID: p.DeviceID, Status: p.Status, Since: p.Since, RowLimit: rowLimit,
+		})
+		if err != nil {
+			return err
+		}
+		rows = make([]pubRow, len(res))
+		for i, x := range res {
+			rows[i] = pubRow(x)
+		}
+	} else {
+		p.RowLimit = rowLimit
+		res, err := s.q.ListMessages(r.Context(), p)
+		if err != nil {
+			return err
+		}
+		rows = make([]pubRow, len(res))
+		for i, x := range res {
+			rows[i] = pubRow(x)
+		}
 	}
 	out := listResp{Data: make([]Message, 0, min(len(rows), limit))}
 	if len(rows) > limit {
@@ -124,7 +151,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) error {
 		out.NextBefore = &last
 	}
 	for _, m := range rows {
-		out.Data = append(out.Data, FromRow(m))
+		out.Data = append(out.Data, fromPub(m))
 	}
 	return httpx.JSON(w, http.StatusOK, out)
 }

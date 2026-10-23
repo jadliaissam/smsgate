@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -52,6 +53,35 @@ type Message struct {
 	FailedAt     *time.Time `json:"failed_at"`
 }
 
+// pubRow is a message row as the public reads select it (no body, idempotency
+// key or request hash); every body-less sqlc row type converts to it.
+type pubRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     uuid.UUID
+	SimSlot      *int16
+	ToNumber     string
+	Status       string
+	ExpiresAt    time.Time
+	ClientRef    *string
+	ErrorCode    *string
+	ErrorMessage *string
+	CreatedAt    time.Time
+	DispatchedAt *time.Time
+	SentAt       *time.Time
+	DeliveredAt  *time.Time
+	FailedAt     *time.Time
+}
+
+func fromPub(m pubRow) Message {
+	return Message{
+		ID: m.ID, DeviceID: m.DeviceID, SIMSlot: m.SimSlot, To: m.ToNumber, Status: m.Status,
+		ClientRef: m.ClientRef, ErrorCode: m.ErrorCode, ErrorMessage: m.ErrorMessage,
+		CreatedAt: m.CreatedAt.UTC(), ExpiresAt: m.ExpiresAt.UTC(),
+		DispatchedAt: utc(m.DispatchedAt), SentAt: utc(m.SentAt), DeliveredAt: utc(m.DeliveredAt), FailedAt: utc(m.FailedAt),
+	}
+}
+
 // FromRow converts a database row; timestamps are rendered as UTC.
 func FromRow(m dbq.Message) Message {
 	return Message{
@@ -75,7 +105,7 @@ type CreateInput struct {
 	DeviceID   uuid.UUID
 	SIMSlot    *int
 	To, Body   string
-	TTLSeconds int // 0 = configured default
+	TTLSeconds *int // nil = configured default; explicit values must be within bounds
 	ClientRef  string
 }
 
@@ -111,10 +141,10 @@ func (s *Service) Wait() { s.wg.Wait() }
 // 'queued' event. A single statement is atomic, so no explicit transaction
 // (BEGIN/COMMIT would add two round-trips) is needed.
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, idemKey string) (Message, bool, error) {
-	if len(idemKey) > maxIdemKey {
-		return Message{}, false, httpx.Unprocessable("invalid_idempotency_key", "Idempotency-Key must be at most 255 characters")
+	if len(idemKey) > maxIdemKey || !utf8.ValidString(idemKey) {
+		return Message{}, false, httpx.Unprocessable("invalid_idempotency_key", "Idempotency-Key must be at most 255 valid UTF-8 characters")
 	}
-	if len(in.ClientRef) > maxClientRef || strings.IndexByte(in.ClientRef, 0) >= 0 {
+	if utf8.RuneCountInString(in.ClientRef) > maxClientRef || !utf8.ValidString(in.ClientRef) || strings.IndexByte(in.ClientRef, 0) >= 0 {
 		return Message{}, false, httpx.Unprocessable("invalid_client_ref", "client_ref must be at most 128 characters")
 	}
 	dev, err := s.q.GetDeviceForUser(ctx, dbq.GetDeviceForUserParams{ID: in.DeviceID, UserID: userID})
@@ -136,11 +166,13 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if seg, _ := sms.Segments(in.Body); seg > s.cfg.MaxSegments {
 		return Message{}, false, httpx.Unprocessable("body_too_long", "body exceeds the maximum number of SMS segments")
 	}
-	ttl := in.TTLSeconds
-	if ttl == 0 {
-		ttl = int(s.cfg.TTLDefault / time.Second)
-	} else if d := time.Duration(ttl) * time.Second; ttl < 0 || d < s.cfg.TTLMin || d > s.cfg.TTLMax {
-		return Message{}, false, httpx.Unprocessable("invalid_ttl", "ttl_seconds is outside the allowed range")
+	ttl := int(s.cfg.TTLDefault / time.Second)
+	// Compare in seconds: converting a huge client value to time.Duration would overflow.
+	if in.TTLSeconds != nil {
+		ttl = *in.TTLSeconds
+		if int64(ttl) < int64(s.cfg.TTLMin/time.Second) || int64(ttl) > int64(s.cfg.TTLMax/time.Second) {
+			return Message{}, false, httpx.Unprocessable("invalid_ttl", "ttl_seconds is outside the allowed range")
+		}
 	}
 	var slot *int16
 	if in.SIMSlot != nil {
