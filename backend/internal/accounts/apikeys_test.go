@@ -169,13 +169,26 @@ func TestListNeverReturnsKey(t *testing.T) {
 	if resp.StatusCode != 200 || strings.Contains(body, `"key":`) || strings.Contains(body, "theirs") || strings.Contains(body, "key_hash") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
-	for _, want := range []string{`"name":"one"`, `"name":"two"`, `"prefix":"sk_live_`, `"revoked_at":"`, `"last_used_at":null`, `"created_at"`} {
+	for _, want := range []string{`{"data":[`, `"name":"one"`, `"name":"two"`, `"prefix":"sk_live_`, `"revoked_at":"`, `"last_used_at":null`, `"created_at"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %s in %s", want, body)
 		}
 	}
 	if strings.Index(body, `"two"`) > strings.Index(body, `"one"`) {
 		t.Fatalf("want newest first: %s", body)
+	}
+}
+
+func TestListEnvelopeEmpty(t *testing.T) {
+	a := apptest.New(t)
+	c := a.Signup(t, "e@example.com")
+	resp, m := a.Do("GET", "/app/api-keys", nil, cookieHdr(c)...)
+	l, ok := m["data"].([]any)
+	if resp.StatusCode != 200 || !ok || len(l) != 0 {
+		t.Fatalf("%d %v", resp.StatusCode, m)
+	}
+	if _, bad := m["keys"]; bad {
+		t.Fatal("legacy keys envelope")
 	}
 }
 
