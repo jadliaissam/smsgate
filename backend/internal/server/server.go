@@ -13,6 +13,7 @@ import (
 	"github.com/smsgate/backend/internal/db/dbq"
 	"github.com/smsgate/backend/internal/devices"
 	"github.com/smsgate/backend/internal/httpx"
+	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
 	"github.com/smsgate/backend/internal/secret"
 )
@@ -25,6 +26,9 @@ type Deps struct {
 	Waker  push.Waker
 	Now    func() time.Time
 	Mailer accounts.Mailer
+	// Messages is optional; when nil New builds one. Callers that need to wait
+	// for in-flight wake goroutines (shutdown, tests) supply their own and call Wait.
+	Messages *messages.Service
 }
 
 // New builds the router with middleware: RequestID, Recover, AccessLog.
@@ -57,6 +61,10 @@ func New(d Deps) http.Handler {
 		Pool: d.Pool, Q: q, Hasher: hasher, Auth: auth, Mailer: d.Mailer, Cfg: d.Cfg, Log: d.Log, Now: d.Now,
 	})
 	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now})
+	if d.Messages == nil {
+		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
+	}
+	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now))
 	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"
 	// matches every method, a wrong method on a known path also yields this 404
 	// rather than the mux's plain-text 405 (accepted for now).

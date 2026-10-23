@@ -18,6 +18,8 @@ import (
 
 	"github.com/smsgate/backend/internal/accounts"
 	"github.com/smsgate/backend/internal/config"
+	"github.com/smsgate/backend/internal/db/dbq"
+	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
 	"github.com/smsgate/backend/internal/server"
 	"github.com/smsgate/backend/internal/testdb"
@@ -25,11 +27,12 @@ import (
 
 // App is a running test server.
 type App struct {
-	URL    string
-	Pool   *pgxpool.Pool
-	Waker  *push.Recorder
-	Mailer *accounts.MemMailer
-	Cfg    config.Config
+	URL      string
+	Pool     *pgxpool.Pool
+	Waker    *push.Recorder
+	Mailer   *accounts.MemMailer
+	Messages *messages.Service
+	Cfg      config.Config
 
 	t      *testing.T
 	client *http.Client
@@ -54,17 +57,23 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 		now:    time.Now,
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	a.Messages = messages.NewService(dbq.New(a.Pool), a.Waker, cfg, log)
 	h := server.New(server.Deps{
-		Pool:   a.Pool,
-		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Cfg:    cfg,
-		Waker:  a.Waker,
-		Mailer: a.Mailer,
-		Now:    a.Now,
+		Pool:     a.Pool,
+		Messages: a.Messages,
+		Log:      log,
+		Cfg:      cfg,
+		Waker:    a.Waker,
+		Mailer:   a.Mailer,
+		Now:      a.Now,
 	})
 	ts := httptest.NewServer(h)
 	a.URL = ts.URL
-	t.Cleanup(ts.Close) // runs before the pool is closed (cleanups are LIFO)
+	// Cleanups are LIFO: server closes first, then in-flight wake goroutines
+	// drain, and only then is the pool (registered earlier) dropped.
+	t.Cleanup(a.Messages.Wait)
+	t.Cleanup(ts.Close)
 	return a
 }
 
