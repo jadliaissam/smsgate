@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/smsgate/backend/internal/accounts"
 	"github.com/smsgate/backend/internal/config"
 	"github.com/smsgate/backend/internal/push"
 	"github.com/smsgate/backend/internal/server"
@@ -23,10 +24,11 @@ import (
 
 // App is a running test server.
 type App struct {
-	URL   string
-	Pool  *pgxpool.Pool
-	Waker *push.Recorder
-	Cfg   config.Config
+	URL    string
+	Pool   *pgxpool.Pool
+	Waker  *push.Recorder
+	Mailer *accounts.MemMailer
+	Cfg    config.Config
 
 	t      *testing.T
 	client *http.Client
@@ -46,16 +48,18 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 		t:      t,
 		Pool:   testdb.New(t),
 		Waker:  &push.Recorder{},
+		Mailer: &accounts.MemMailer{},
 		Cfg:    cfg,
 		now:    time.Now,
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 	h := server.New(server.Deps{
-		Pool:  a.Pool,
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Cfg:   cfg,
-		Waker: a.Waker,
-		Now:   a.Now,
+		Pool:   a.Pool,
+		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:    cfg,
+		Waker:  a.Waker,
+		Mailer: a.Mailer,
+		Now:    a.Now,
 	})
 	ts := httptest.NewServer(h)
 	a.URL = ts.URL
@@ -122,4 +126,40 @@ func (a *App) Do(method, path string, body any, headers ...string) (*http.Respon
 		_ = json.Unmarshal(raw, &m)
 	}
 	return resp, m
+}
+
+// Password is the password used by the Signup fixture.
+const Password = "correct-horse-battery"
+
+// Token returns the email verification token last mailed to email.
+func (a *App) Token(email string) string {
+	a.t.Helper()
+	tok := accounts.TokenFrom(a.Mailer.Last(email))
+	if tok == "" {
+		a.t.Fatalf("no verification email for %s", email)
+	}
+	return tok
+}
+
+// Signup registers email with Password, verifies it via the mailed token and
+// logs in, returning the session cookie.
+func (a *App) Signup(t *testing.T, email string) *http.Cookie {
+	t.Helper()
+	if r, m := a.Do("POST", "/app/signup", map[string]string{"email": email, "password": Password}); r.StatusCode != 201 {
+		t.Fatalf("signup: %d %v", r.StatusCode, m)
+	}
+	if r, m := a.Do("POST", "/app/verify", map[string]string{"token": a.Token(email)}); r.StatusCode != 204 {
+		t.Fatalf("verify: %d %v", r.StatusCode, m)
+	}
+	r, m := a.Do("POST", "/app/login", map[string]string{"email": email, "password": Password})
+	if r.StatusCode != 204 {
+		t.Fatalf("login: %d %v", r.StatusCode, m)
+	}
+	for _, c := range r.Cookies() {
+		if c.Name == a.Cfg.SessionCookie {
+			return c
+		}
+	}
+	t.Fatal("no session cookie")
+	return nil
 }
