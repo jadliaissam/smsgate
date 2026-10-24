@@ -66,44 +66,81 @@ jobs:
           for i in $(seq 1 50); do curl -sf localhost:8080/healthz >/dev/null && break; sleep 0.2; done
           ../scripts/smoke.sh /tmp/smsgate.log || { cat /tmp/smsgate.log; exit 1; }
 
-      - name: container image builds
-        run: docker build -t smsgate-api:ci .
-
-  deploy:
-    # Deploys backend/ (it contains captain-definition + Dockerfile) to CapRover.
-    # Required repository/environment settings:
-    #   secrets.CAPROVER_URL        e.g. https://captain.example.com
-    #   secrets.CAPROVER_APP_TOKEN  App Configs -> Deployment -> "Enable App Token"
-    #   vars.CAPROVER_APP           CapRover app name, e.g. smsgate-api
+  image:
+    # Builds the backend/ image on GitHub. It is pushed to GHCR only from main;
+    # on other branches and pull requests it is built to prove it still builds.
     needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: production
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: image reference
+        id: ref
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/smsgate-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.ref.outputs.ref }}
+            ghcr.io/${{ github.repository_owner }}/smsgate-api:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=smsgate-api
+          cache-to: type=gha,mode=max,scope=smsgate-api
+
+  deploy:
+    # CapRover only pulls the image built above and runs it; nothing is built
+    # on the server. The GHCR package must be public (or CapRover must have a
+    # registry login for ghcr.io) so the server can pull it.
+    # Required repository settings:
+    #   secrets.CAPROVER_URL        e.g. https://captain.example.com
+    #   secrets.CAPROVER_APP_TOKEN  app: Deployment -> "Enable App Token"
+    #   vars.CAPROVER_APP           CapRover app name
+    needs: image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: deploy-production-smsgate-api
+      cancel-in-progress: false
+    steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
-      - name: build deploy tarball
-        # captain-definition must sit at the tarball root.
-        run: tar -cf deploy.tar -C backend --exclude=./backend .
-
-      - name: deploy to CapRover
+      - name: deploy image to CapRover
         env:
           CAPROVER_URL: ${{ secrets.CAPROVER_URL }}
-          CAPROVER_APP_TOKEN: ${{ secrets.CAPROVER_APP_TOKEN }}
-          CAPROVER_APP: ${{ vars.CAPROVER_APP }}
+          APP_TOKEN: ${{ secrets.CAPROVER_APP_TOKEN }}
+          APP_NAME: ${{ vars.CAPROVER_APP || 'smsgate-api' }}
+          IMAGE: ${{ needs.image.outputs.ref }}
         run: |
-          test -n "$CAPROVER_URL" && test -n "$CAPROVER_APP_TOKEN" && test -n "$CAPROVER_APP" \
-            || { echo "CAPROVER_URL, CAPROVER_APP_TOKEN (secrets) and CAPROVER_APP (variable) must be set"; exit 1; }
+          test -n "$CAPROVER_URL" && test -n "$APP_TOKEN" && test -n "$APP_NAME" \
+            || { echo "CAPROVER_URL and CAPROVER_APP_TOKEN (secrets) and the app name must be set"; exit 1; }
           npx --yes caprover@2.4.4 deploy \
             --caproverUrl "$CAPROVER_URL" \
-            --appToken "$CAPROVER_APP_TOKEN" \
-            --appName "$CAPROVER_APP" \
-            --tarFile ./deploy.tar
+            --appToken "$APP_TOKEN" \
+            --appName "$APP_NAME" \
+            --imageName "$IMAGE"
