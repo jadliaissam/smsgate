@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { mockFetch } from '../test/mockFetch'
 import { locationOf, renderApp, unverifiedMe, verifiedMe } from '../test/renderApp'
+import { RESEND_COOLDOWN_KEY } from '../api/resendCooldown'
 
 const emptyLists = [
   { path: '/app/devices', json: { data: [] } },
@@ -36,6 +37,21 @@ describe('AppShell', () => {
     expect(call!.headers['content-type']).toBe('application/json')
     // The previous user's data is dropped once the protected pages are gone.
     await waitFor(() => expect(queryClient.getQueryCache().getAll()).toHaveLength(0))
+  })
+
+  it('logout clears the resend cooldown so the next user starts fresh', async () => {
+    const user = userEvent.setup()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { method: 'POST', path: '/app/logout', status: 204 },
+      ...emptyLists,
+    ])
+    sessionStorage.setItem(RESEND_COOLDOWN_KEY, String(Date.now() + 50_000))
+    const { router } = renderApp('/')
+    await user.click(await screen.findByRole('button', { name: /account menu/i }))
+    await user.click(await screen.findByRole('menuitem', { name: /sign out/i }))
+    await waitFor(() => expect(locationOf(router)).toBe('/login'))
+    expect(sessionStorage.getItem(RESEND_COOLDOWN_KEY)).toBeNull()
   })
 
   it('shows the unverified banner; resend calls POST /app/resend-verification then cools down', async () => {

@@ -140,6 +140,9 @@ describe('API keys', () => {
     await waitFor(() => expect(cacheDump(queryClient)).not.toContain(FULL_KEY))
     expect(screen.getAllByText(FULL_KEY)).toHaveLength(1)
 
+    // Copied, so Done closes without a confirm.
+    await user.click(within(dialog).getByRole('button', { name: /copy key/i }))
+    await expect(navigator.clipboard.readText()).resolves.toBe(FULL_KEY)
     await user.click(within(dialog).getByRole('button', { name: /done/i }))
     // Wiped at once, not only after the exit animation.
     expect(screen.queryByText(FULL_KEY)).not.toBeInTheDocument()
@@ -152,7 +155,7 @@ describe('API keys', () => {
     expect(cacheDump(queryClient)).not.toContain(FULL_KEY)
   })
 
-  it('Esc closes the reveal and wipes the key too', async () => {
+  it('closing before the key was copied asks for confirmation (Esc, Done)', async () => {
     const user = userEvent.setup()
     mockFetch([
       { path: '/app/me', json: verifiedMe },
@@ -165,8 +168,62 @@ describe('API keys', () => {
     const dialog = await screen.findByRole('dialog', { name: /create an api key/i })
     await user.type(within(dialog).getByLabelText(/name/i), 'Billing worker{Enter}')
     await within(dialog).findByText(FULL_KEY)
+
     await user.keyboard('{Escape}')
+    expect(within(dialog).getByText(/you won.t see this key again/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(FULL_KEY)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: /go back/i }))
+    expect(within(dialog).queryByText(/you won.t see this key again/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /done/i }))
+    await user.click(within(dialog).getByRole('button', { name: /close anyway/i }))
     expect(screen.queryByText(FULL_KEY)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('cannot be dismissed while the key is being created', async () => {
+    const user = userEvent.setup()
+    const gate = deferred()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/api-keys', json: { data: [] } },
+      { method: 'POST', path: '/app/api-keys', status: 201, json: created, until: gate.promise },
+    ])
+    renderApp('/api-keys')
+
+    await user.click(await screen.findByRole('button', { name: /create key/i }))
+    const dialog = await screen.findByRole('dialog', { name: /create an api key/i })
+    await user.type(within(dialog).getByLabelText(/name/i), 'Billing worker{Enter}')
+
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeDisabled())
+    expect(within(dialog).queryByRole('button', { name: /^close$/i })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByTestId('modal-backdrop'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    gate.resolve()
+    expect(await within(dialog).findByText(FULL_KEY)).toBeInTheDocument()
+  })
+
+  it('shows the key before the list refetch finishes', async () => {
+    const user = userEvent.setup()
+    const gate = deferred()
+    const m = mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/api-keys', json: { data: [] }, once: true },
+      { path: '/app/api-keys', json: { data: [createdListed] }, until: gate.promise },
+      { method: 'POST', path: '/app/api-keys', status: 201, json: created },
+    ])
+    renderApp('/api-keys')
+
+    await user.click(await screen.findByRole('button', { name: /create key/i }))
+    const dialog = await screen.findByRole('dialog', { name: /create an api key/i })
+    await user.type(within(dialog).getByLabelText(/name/i), 'Billing worker{Enter}')
+
+    expect(await within(dialog).findByText(FULL_KEY)).toBeInTheDocument()
+    expect(m.callsTo('GET', '/app/api-keys')).toHaveLength(2)
+    gate.resolve()
+    expect(await screen.findByRole('listitem', { name: 'Billing worker' })).toBeInTheDocument()
   })
 
   it('shows invalid_name on the name field', async () => {

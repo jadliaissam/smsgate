@@ -4,7 +4,7 @@ import { useLogin, useSignup } from '../api/queries'
 import { AuthHeader } from '../layout/AuthLayout'
 import { FormAlert } from '../layout/FormAlert'
 import { ResendButton } from '../layout/ResendButton'
-import { startResendCooldown } from '../layout/resendCooldown'
+import { startResendCooldown } from '../api/resendCooldown'
 import { Button } from '../ui/Button'
 import { buttonStyles, cx } from '../ui/cx'
 import { Input } from '../ui/Input'
@@ -27,14 +27,15 @@ export function Signup() {
     const creds = { email: email.trim(), password }
     signup.mutate(creds, {
       onSuccess: (user) => {
-        // The backend just sent the verification email.
-        startResendCooldown()
         setPassword('')
         // Signup does not open a session; sign in right away so the
         // dashboard (and resending the link) work without a second form.
         login.mutate(creds, {
           onSuccess: () => setSignedIn(true),
           onSettled: () => {
+            // The backend just sent the verification email. Started after
+            // login, which clears any cooldown of a previous session.
+            startResendCooldown()
             setSentTo(user.email)
             // Drop the password from both mutations' variables.
             signup.reset()

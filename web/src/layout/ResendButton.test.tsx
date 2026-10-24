@@ -3,10 +3,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createQueryClient } from '../api/queries'
-import { mockFetch } from '../test/mockFetch'
+import { apiError, mockFetch } from '../test/mockFetch'
 import { ToastProvider } from '../ui/Toast'
 import { ResendButton } from './ResendButton'
-import { RESEND_COOLDOWN_KEY } from './resendCooldown'
+import { RESEND_COOLDOWN_KEY } from '../api/resendCooldown'
 
 function renderButtons(count: number) {
   const qc = createQueryClient({ onUnauthorized: () => {}, retry: false })
@@ -60,5 +60,13 @@ describe('ResendButton cooldown', () => {
     sessionStorage.setItem(RESEND_COOLDOWN_KEY, String(Date.now() - 1000))
     renderButtons(1)
     expect(screen.getByRole('button', { name: 'Resend 0' })).toBeEnabled()
+  })
+
+  it('a 429 rate_limited answer starts the cooldown too', async () => {
+    const user = userEvent.setup()
+    mockFetch([{ method: 'POST', path: '/app/resend-verification', ...apiError(429, 'rate_limited') }])
+    renderButtons(2)
+    await user.click(screen.getByRole('button', { name: 'Resend 0' }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /resend in 60s/i })).toHaveLength(2))
   })
 })

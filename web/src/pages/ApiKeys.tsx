@@ -353,7 +353,8 @@ interface CreateKeyModalProps {
  * Name → create → reveal. [Review Focus 2] The full key lives only in this
  * component's state while it is shown: the mutation is reset as soon as the
  * key is copied into state (its cache entry is dropped), and closing wipes
- * the state at once.
+ * the state at once. It cannot be dismissed while the key is being created,
+ * and closing before the key was copied asks for confirmation.
  */
 function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
   const create = useCreateApiKey()
@@ -363,16 +364,30 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
   const [nameError, setNameError] = useState<string>()
   const [formError, setFormError] = useState<string>()
   const [secret, setSecret] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [confirmingClose, setConfirmingClose] = useState(false)
 
-  const close = () => {
+  const forceClose = () => {
     setSecret(null)
     setName('')
+    setConfirmingClose(false)
     create.reset()
     onClose()
   }
 
+  /** Esc, backdrop, X, Cancel, Done. */
+  const requestClose = () => {
+    if (create.isPending) return
+    if (phase === 'reveal' && secret !== null && !copied) {
+      setConfirmingClose(true)
+      return
+    }
+    forceClose()
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault()
+    if (create.isPending) return
     setNameError(undefined)
     setFormError(undefined)
     const trimmed = name.trim()
@@ -398,7 +413,7 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
   const footer: Record<Phase, ReactNode> = {
     form: (
       <>
-        <Button variant="secondary" onClick={close}>
+        <Button variant="secondary" disabled={create.isPending} onClick={requestClose}>
           Cancel
         </Button>
         <Button type="submit" form={formId} icon={<KeyIcon />} loading={create.isPending}>
@@ -406,9 +421,20 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
         </Button>
       </>
     ),
-    reveal: <Button onClick={close}>Done</Button>,
+    reveal: confirmingClose ? (
+      <>
+        <Button variant="secondary" onClick={() => setConfirmingClose(false)}>
+          Go back
+        </Button>
+        <Button variant="danger" onClick={forceClose}>
+          Close anyway
+        </Button>
+      </>
+    ) : (
+      <Button onClick={requestClose}>Done</Button>
+    ),
     unverified: (
-      <Button variant="secondary" onClick={close}>
+      <Button variant="secondary" onClick={requestClose}>
         Close
       </Button>
     ),
@@ -417,7 +443,8 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
   return (
     <Modal
       open={open}
-      onClose={close}
+      onClose={requestClose}
+      hideClose={create.isPending}
       title={phase === 'reveal' ? 'Save your API key' : 'Create an API key'}
       description={
         phase === 'form'
@@ -435,6 +462,7 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
             autoComplete="off"
             maxLength={64}
             autoFocus
+            readOnly={create.isPending}
             value={name}
             onChange={(e) => setName(e.target.value)}
             error={nameError}
@@ -443,7 +471,9 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
         </form>
       )}
 
-      {phase === 'reveal' && <RevealedKey secret={secret} />}
+      {phase === 'reveal' && (
+        <RevealedKey secret={secret} confirmingClose={confirmingClose} onCopied={() => setCopied(true)} />
+      )}
 
       {phase === 'unverified' && (
         <div className="flex flex-col items-start gap-3 rounded-xl border border-warning-200 bg-warning-50 p-4 text-sm dark:border-warning-500/25 dark:bg-warning-500/10">
@@ -463,7 +493,13 @@ function CreateKeyModal({ open, onClose }: CreateKeyModalProps) {
   )
 }
 
-function RevealedKey({ secret }: { secret: string | null }) {
+interface RevealedKeyProps {
+  secret: string | null
+  confirmingClose: boolean
+  onCopied: () => void
+}
+
+function RevealedKey({ secret, confirmingClose, onCopied }: RevealedKeyProps) {
   return (
     <div className="flex flex-col gap-4">
       <div className="relative">
@@ -473,19 +509,32 @@ function RevealedKey({ secret }: { secret: string | null }) {
           <code className="min-w-0 flex-1 py-1.5 font-mono text-[13px] leading-6 break-all text-fg select-all">
             {secret ?? 'sk_live_••••••••••••••••••••••••'}
           </code>
-          {secret && <CopyButton value={secret} label="Copy key" showLabel className="shrink-0" />}
+          {secret && <CopyButton value={secret} label="Copy key" showLabel className="shrink-0" onCopied={onCopied} />}
         </div>
       </div>
-      <div
-        role="note"
-        className="flex items-start gap-2.5 rounded-xl border border-warning-200 bg-warning-50 px-3.5 py-3 text-sm text-warning-900 dark:border-warning-500/25 dark:bg-warning-500/10 dark:text-warning-200"
-      >
-        <AlertIcon className="mt-0.5 size-4 shrink-0" />
-        <p>
-          <strong className="font-semibold">{"You won't see this again."}</strong> Copy it now and keep it somewhere
-          safe, such as your server’s environment variables. Lost it? Revoke it and create a new one.
-        </p>
-      </div>
+      {confirmingClose ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-xl border border-danger-200 bg-danger-50 px-3.5 py-3 text-sm text-danger-800 animate-fade-in motion-reduce:animate-none dark:border-danger-500/25 dark:bg-danger-500/10 dark:text-danger-200"
+        >
+          <AlertIcon className="mt-0.5 size-4 shrink-0" />
+          <p>
+            <strong className="font-semibold">{"You won't see this key again."}</strong> You haven’t copied it yet.
+            Close anyway?
+          </p>
+        </div>
+      ) : (
+        <div
+          role="note"
+          className="flex items-start gap-2.5 rounded-xl border border-warning-200 bg-warning-50 px-3.5 py-3 text-sm text-warning-900 dark:border-warning-500/25 dark:bg-warning-500/10 dark:text-warning-200"
+        >
+          <AlertIcon className="mt-0.5 size-4 shrink-0" />
+          <p>
+            <strong className="font-semibold">{"You won't see this again."}</strong> Copy it now and keep it somewhere
+            safe, such as your server’s environment variables. Lost it? Revoke it and create a new one.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

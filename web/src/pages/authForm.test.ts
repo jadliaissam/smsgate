@@ -21,6 +21,10 @@ describe('safeNext', () => {
     ['absolute', 'https://evil.com'],
     ['absolute path on another origin', 'https://evil.com/devices'],
     ['javascript URL', 'javascript:alert(1)'],
+    // Dot segments that normalise to a protocol-relative path.
+    ['dot segment', '/.//evil.com'],
+    ['parent segment', '/a/..//evil.com'],
+    ['dot segment + backslash', '/./\\evil.com'],
   ])('rejects %s', (_label, next) => {
     expect(safeNext(next, origin)).toBe('/')
   })

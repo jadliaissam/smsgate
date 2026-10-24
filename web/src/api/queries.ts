@@ -10,6 +10,7 @@ import {
 import { useRouter } from '@tanstack/react-router'
 import { api, ApiError, isApiError } from './client'
 import { errorCopy } from './errors'
+import { clearResendCooldown } from './resendCooldown'
 import type { ApiKey, CreatedApiKey, Device, Me, Page, PairingCode } from './types'
 import { useToast } from '../ui/Toast'
 
@@ -78,7 +79,10 @@ export function useLogin() {
     // A new session: forget everything cached for a previous one. This runs
     // on a signed-out page (login/signup), before navigating into the app, so
     // no protected query is mounted to refetch into (or be orphaned by) it.
-    onSuccess: () => qc.clear(),
+    onSuccess: () => {
+      qc.clear()
+      clearResendCooldown()
+    },
   })
 }
 
@@ -102,6 +106,7 @@ export function useLogout() {
     onSettled: async () => {
       await router.navigate({ to: '/login' })
       qc.clear()
+      clearResendCooldown()
     },
   })
 }
@@ -232,7 +237,11 @@ export function useCreateApiKey() {
   return useMutation({
     mutationFn: (name: string) => api<CreatedApiKey>('/app/api-keys', { method: 'POST', body: { name } }),
     gcTime: 0,
-    onSuccess: () => qc.invalidateQueries({ queryKey: apiKeysKey }),
+    // Not returned: TanStack would await the refetch before the caller's
+    // onSuccess, holding back the one-time key until the list reloads.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: apiKeysKey })
+    },
     // The server says the email is not verified: refresh the session so the
     // page switches to its unverified state.
     onError: (err) => {
