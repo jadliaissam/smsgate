@@ -535,3 +535,29 @@ func TestWSFramePipelinedWithHandshake(t *testing.T) {
 		t.Fatalf("reply %x %s", hdr, body)
 	}
 }
+
+// A burst of wakes for one device (bulk sends) must all arrive in order and
+// must not cost the device its socket.
+func TestWSWakeBurst(t *testing.T) {
+	a := apptest.New(t, noFallback)
+	f := setup(t, a)
+	c := dial(t, a, f.tok)
+	const n = 100
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = uuid.Must(uuid.NewV7()).String()
+	}
+	// One statement: the listener receives all n notifications at once.
+	if _, err := a.Pool.Exec(context.Background(),
+		`SELECT pg_notify('smsgate_wake', $1 || ':' || id) FROM unnest($2::text[]) AS id`, f.dev.String(), ids); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range ids {
+		if m := read(t, c); m["type"] != "new" || m["message_id"] != want {
+			t.Fatalf("frame %d: %v, want message %s", i, m, want)
+		}
+	}
+	if m := roundTrip(t, c, `{"type":"ping"}`); m["type"] != "pong" {
+		t.Fatalf("socket not usable after burst: %v", m)
+	}
+}

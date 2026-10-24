@@ -46,9 +46,11 @@ const (
 	CloseRevoked  websocket.StatusCode = 4003 // the device was revoked
 )
 
-// queueLen bounds the frames waiting to be written to one socket. A device
-// that falls this far behind is disconnected (it catches up via pending).
-const queueLen = 4
+// maxQueue bounds the frames waiting to be written to one socket. The queue
+// grows on demand (an idle socket holds none), so a burst of wakes for one
+// device is delivered in order; a device that falls this far behind is
+// disconnected and catches up via pending.
+const maxQueue = 128
 
 // bufSize is the read and write buffer of a hijacked socket. Device frames
 // are small; net/http's 4 KiB pair would otherwise be most of an idle
@@ -99,8 +101,10 @@ type conn struct {
 	device uuid.UUID
 	ws     *websocket.Conn
 
-	out      chan outFrame
-	draining atomic.Bool
+	qmu      sync.Mutex
+	q        []outFrame   // frames waiting to be written, guarded by qmu
+	draining bool         // a drain goroutine is running, guarded by qmu
+	closed   bool         // socket closing or closed: accept nothing more, guarded by qmu
 	lastSeen atomic.Int64 // unix nanos of the last received frame (hub clock)
 	reaped   bool         // guarded by Hub.mu
 
@@ -144,7 +148,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, device uuid.UUID, fh
 	}
 	ws.SetReadLimit(h.opt.ReadLimit)
 	now := h.now()
-	c := &conn{hub: h, id: uuid.Must(uuid.NewV7()), device: device, ws: ws, out: make(chan outFrame, queueLen), touched: now}
+	c := &conn{hub: h, id: uuid.Must(uuid.NewV7()), device: device, ws: ws, touched: now}
 	c.lastSeen.Store(now.UnixNano())
 
 	h.mu.Lock()
@@ -284,39 +288,53 @@ func (h *Hub) cleanup(c *conn) {
 	}
 }
 
-// enqueue queues f without blocking. A full queue means the device is not
-// reading: it is disconnected and will catch up through pending.
-func (c *conn) enqueue(f outFrame) {
-	select {
-	case c.out <- f:
-	default:
-		go c.ws.CloseNow() //nolint:errcheck
-		return
+// enqueue queues f without blocking and reports whether the frame will be
+// written. A full queue means the device is not reading: it is disconnected
+// and will catch up through pending.
+func (c *conn) enqueue(f outFrame) bool {
+	c.qmu.Lock()
+	if c.closed {
+		c.qmu.Unlock()
+		return false
 	}
-	if c.draining.CompareAndSwap(false, true) {
+	if len(c.q) >= maxQueue {
+		c.closed = true
+		c.q = nil
+		c.qmu.Unlock()
+		go c.ws.CloseNow() //nolint:errcheck
+		return false
+	}
+	c.q = append(c.q, f)
+	start := !c.draining
+	c.draining = true
+	c.qmu.Unlock()
+	if start {
 		go c.drain()
 	}
+	return true
 }
 
 // drain writes queued frames in order and exits when the queue is empty, so
-// an idle socket has no writer goroutine.
+// an idle socket has no writer goroutine and no queue memory.
 func (c *conn) drain() {
 	for {
-		for more := true; more; {
-			select {
-			case f := <-c.out:
-				if !c.write(f) {
-					return // socket closed; draining stays set so nothing restarts
-				}
-			default:
-				more = false
-			}
-		}
-		c.draining.Store(false)
-		// A frame enqueued after the empty check but before the Store saw
-		// draining=true and started nobody: pick it up.
-		if len(c.out) == 0 || !c.draining.CompareAndSwap(false, true) {
+		c.qmu.Lock()
+		if len(c.q) == 0 {
+			c.q = nil
+			c.draining = false
+			c.qmu.Unlock()
 			return
+		}
+		f := c.q[0]
+		c.q[0] = outFrame{}
+		c.q = c.q[1:]
+		c.qmu.Unlock()
+		if !c.write(f) {
+			c.qmu.Lock()
+			c.closed = true
+			c.q = nil
+			c.qmu.Unlock()
+			return // draining stays set so nothing restarts
 		}
 	}
 }
@@ -389,8 +407,7 @@ func (h *Hub) Wake(device, message uuid.UUID) bool {
 	if c == nil {
 		return false
 	}
-	c.enqueue(outFrame{data: newFrame(message)})
-	return true
+	return c.enqueue(outFrame{data: newFrame(message)})
 }
 
 // Revoke sends {"type":"revoked"} and closes with 4003 if this instance holds
