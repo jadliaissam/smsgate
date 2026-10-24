@@ -107,6 +107,7 @@ func Routes(mux *http.ServeMux, d Deps) {
 	mux.Handle("POST /app/login", rl(handle(s.login)))
 	mux.Handle("POST /app/logout", handle(s.logout))
 	sess := RequireSession(d.Q, d.Cfg.SessionCookie, d.Now)
+	mux.Handle("POST /app/resend-verification", rl(sess(handle(s.resendVerification))))
 	mux.Handle("GET /app/me", sess(handle(s.me)))
 	mux.Handle("POST /app/api-keys", sess(handle(s.createAPIKey)))
 	mux.Handle("GET /app/api-keys", sess(handle(s.listAPIKeys)))

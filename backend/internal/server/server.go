@@ -61,8 +61,15 @@ func New(d Deps) http.Handler {
 	// Rate limits (nil limiter = disabled): per client IP on unauthenticated
 	// auth endpoints, per API key on sends, per device on the device API.
 	authRL := ratelimit.New(d.Cfg.RLAuthPerMin, d.Cfg.RLMaxKeys).Middleware(ratelimit.IPKey(d.Cfg.TrustedProxies))
-	sendRL := ratelimit.New(d.Cfg.RLSendPerMin, d.Cfg.RLMaxKeys).Middleware(func(r *http.Request) ratelimit.Key {
+	// One send limiter, two key spaces: API key id on /v1, user id on /app
+	// (random UUIDs, so they cannot collide). A user driving the dashboard and
+	// a key sending via the API therefore have separate per-minute budgets.
+	sendLim := ratelimit.New(d.Cfg.RLSendPerMin, d.Cfg.RLMaxKeys)
+	sendRL := sendLim.Middleware(func(r *http.Request) ratelimit.Key {
 		return ratelimit.Key(accounts.APIKeyID(r.Context()))
+	})
+	appSendRL := sendLim.Middleware(func(r *http.Request) ratelimit.Key {
+		return ratelimit.Key(accounts.UserID(r.Context()))
 	})
 	devRL := ratelimit.New(d.Cfg.RLDevicePerMin, d.Cfg.RLMaxKeys).Middleware(func(r *http.Request) ratelimit.Key {
 		return ratelimit.Key(devices.FromContext(r.Context()).ID)
@@ -76,6 +83,7 @@ func New(d Deps) http.Handler {
 		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
 	}
 	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now), sendRL)
+	messages.AppRoutes(mux, d.Messages, accounts.RequireSession(q, d.Cfg.SessionCookie, d.Now), appSendRL)
 	devAuth := devices.RequireDevice(q)
 	messages.DeviceRoutes(mux, d.Messages, func(h http.Handler) http.Handler { return devAuth(devRL(h)) })
 	// Catch-all so unmatched routes get the JSON error shape. Note: because "/"

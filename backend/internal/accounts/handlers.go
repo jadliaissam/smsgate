@@ -167,3 +167,55 @@ func (s *service) me(w http.ResponseWriter, r *http.Request) error {
 		Plan          string    `json:"plan"`
 	}{u.ID, u.Email, u.EmailVerifiedAt != nil, u.PlanID})
 }
+
+// resendVerification issues a fresh verification link to the session user.
+// It always answers 204 (nothing here reveals account state beyond the
+// caller's own): verified users and calls within ResendInterval of the last
+// send are no-ops. The last send time is the newest token's expiry minus
+// EmailTokenTTL, so no schema change is needed. The user row is locked for the
+// check-delete-insert so concurrent calls cannot both send.
+func (s *service) resendVerification(w http.ResponseWriter, r *http.Request) error {
+	ctx := r.Context()
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.Q.WithTx(tx)
+	u, err := q.GetUserForUpdate(ctx, UserID(ctx))
+	if err != nil {
+		return err
+	}
+	if u.EmailVerifiedAt != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	now := s.Now()
+	switch exp, err := q.LatestEmailTokenExpiry(ctx, u.ID); {
+	case err == nil:
+		if now.Sub(exp.Add(-s.Cfg.EmailTokenTTL)) < s.Cfg.ResendInterval {
+			w.WriteHeader(http.StatusNoContent)
+			return nil
+		}
+	case !isNoRows(err):
+		return err
+	}
+	if err := q.DeleteEmailTokensForUser(ctx, u.ID); err != nil {
+		return err
+	}
+	tok := secret.Token("")
+	if err := q.CreateEmailToken(ctx, dbq.CreateEmailTokenParams{
+		TokenHash: secret.Hash(tok), UserID: u.ID, ExpiresAt: now.Add(s.Cfg.EmailTokenTTL),
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	link := s.Cfg.PublicURL + "/verify?token=" + url.QueryEscape(tok)
+	if err := s.Mailer.Send(ctx, u.Email, "Verify your SMSGate email", "Confirm your email: "+link); err != nil {
+		s.Log.Error("send verification email", "user_id", u.ID, "err", err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}

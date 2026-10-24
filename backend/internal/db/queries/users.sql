@@ -11,6 +11,15 @@ SELECT * FROM users WHERE id = $1;
 -- name: CreateEmailToken :exec
 INSERT INTO email_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3);
 
+-- name: GetUserForUpdate :one
+SELECT * FROM users WHERE id = $1 FOR UPDATE;
+
+-- name: LatestEmailTokenExpiry :one
+SELECT expires_at FROM email_tokens WHERE user_id = $1 ORDER BY expires_at DESC LIMIT 1;
+
+-- name: DeleteEmailTokensForUser :exec
+DELETE FROM email_tokens WHERE user_id = $1;
+
 -- name: ConsumeEmailToken :one
 DELETE FROM email_tokens WHERE token_hash = $1 AND expires_at > @now
 RETURNING user_id;

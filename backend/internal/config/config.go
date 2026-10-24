@@ -66,6 +66,7 @@ type Config struct {
 	CookieSecure  bool
 
 	EmailTokenTTL       time.Duration
+	ResendInterval      time.Duration // min gap between verification emails per user
 	APIKeyTouchInterval time.Duration
 
 	FCMCredentialsFile string
@@ -144,6 +145,7 @@ func Default() Config {
 		CookieSecure:  true,
 
 		EmailTokenTTL:       24 * time.Hour,
+		ResendInterval:      time.Minute,
 		APIKeyTouchInterval: time.Minute,
 
 		FCMEndpoint:       "https://fcm.googleapis.com",
@@ -238,6 +240,7 @@ func (l *loader) config() (Config, error) {
 	c.CookieSecure = l.boolean("COOKIE_SECURE", c.Env != "dev")
 
 	c.EmailTokenTTL = l.dur("EMAIL_TOKEN_TTL", c.EmailTokenTTL)
+	c.ResendInterval = l.dur("RESEND_VERIFICATION_INTERVAL", c.ResendInterval)
 	c.APIKeyTouchInterval = l.dur("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)
 
 	c.FCMCredentialsFile = l.str("FCM_CREDENTIALS_FILE", c.FCMCredentialsFile)
@@ -342,6 +345,7 @@ func (c Config) Validate() error {
 	pos("PURGE_INTERVAL", c.PurgeInterval)
 	pos("SESSION_TTL", c.SessionTTL)
 	pos("EMAIL_TOKEN_TTL", c.EmailTokenTTL)
+	pos("RESEND_VERIFICATION_INTERVAL", c.ResendInterval)
 	pos("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)
 	pos("WAKE_TIMEOUT", c.WakeTimeout)
 	pos("SMTP_TIMEOUT", c.SMTPTimeout)
