@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-24 (end of session; usage limit reached).
+Last updated: 2026-10-24 (A1 and A3 reviewed and fixed; A4 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -143,7 +143,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0, A2 approved. A1 (backend WebSocket) and A3 (API client) committed, not yet approved. A4 to A10 not started |
+| Android build | Tasks A0 to A3 approved (A1 and A3 after two fix rounds each). A4 to A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
 Live dashboard: https://smsgate-web.captain-1.duckdns.org. The WebSocket endpoint is not live: it exists only on `feat/android-app`.
@@ -322,12 +322,9 @@ The work followed a plan → implement → review loop:
 
 In order. Items 1 to 4 are on `feat/android-app`; merge it to `main` only after item 3, because merging deploys the backend WebSocket.
 
-1. **Android A1 review.** The review of the backend WebSocket (commit "feat(api): device websocket with cross-instance wake routing") was stopped before it reported. Rerun it. Brief: `.superpowers/sdd/2026-10-24-android-app/task-1-brief.md`. Focus: hub races, cross-instance replacement, hijack with small buffers, FCM fallback timers, shutdown ordering, nginx change.
-2. **Android A3 fix round.** Review verdict was "needs fixes". Two must-fix items in `auth/CredentialStore.kt`:
-   - `save` and `clear` are not serialized. Add a mutex and a `clearIfToken(token)` for the 401 path, so a late 401 from an old request cannot wipe freshly paired credentials.
-   - Keystore encrypt and decrypt run on the caller's thread, including the UI collector. Move them to `Dispatchers.IO`.
-   - Minors: `decrypt` should also catch `IOException`; document claim semantics (a cancelled or failed claim may already have taken the message); WebSocket client must use `readTimeout(0)` plus a ping interval; add tests for cancellation and concurrent save/clear.
-3. **Android A4 to A10**, in plan order: onboarding, permissions and pairing; message journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens; release pipeline and APK download; end-to-end test on a real phone with performance measurements.
+1. **Android A1 (done).** Reviewed twice; fixes: wake bursts queue instead of dropping the socket, sockets ordered by a DB sequence (migration `00007`), wakes replayed after a LISTEN outage (new env `WS_RESYNC_MARGIN`). Open minors are in the ledger. Deploy-time decision for the user: raise `GOMEMLIMIT` on `smsgate-api` from 96 MiB to about 160 MiB (10k sockets need about 110 MiB). During a rolling deploy, old and new instances ignore each other's `smsgate_ws` payloads, so replacing a socket across versions does not work until all instances are updated.
+2. **Android A3 (done).** Reviewed twice. `CredentialStore` now serializes writes, runs Keystore work on IO, has `clearIfToken`/`clearIfDevice` for the 401 path, and clears even when cancelled. The instrumented Keystore test is left for A10.
+3. **Android A4 to A10**, in plan order (A7 note: run `pending()` on every WebSocket (re)connect and treat repeated `new` frames idempotently; the backend replays at most 64 wakes per device after an outage): onboarding, permissions and pairing; message journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens; release pipeline and APK download; end-to-end test on a real phone with performance measurements.
 4. **Before merging `feat/android-app`:**
    - Run the backend and Android CI on the branch (a pull request does this).
    - Consider raising `GOMEMLIMIT` to about 160 MiB on `smsgate-api` if many sockets are expected.
