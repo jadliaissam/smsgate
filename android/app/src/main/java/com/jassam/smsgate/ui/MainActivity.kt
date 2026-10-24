@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.jassam.smsgate.appGraph
 import com.jassam.smsgate.ui.theme.SmsGateTheme
 
 class MainActivity : ComponentActivity() {
@@ -20,7 +21,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             SmsGateTheme {
-                SplashScreen()
+                AppRoot(appGraph)
             }
         }
     }

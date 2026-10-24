@@ -2,6 +2,7 @@ package com.jassam.smsgate
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.emptyPreferences
@@ -12,6 +13,13 @@ import com.jassam.smsgate.api.ServerClock
 import com.jassam.smsgate.api.ServerUrl
 import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.KeystoreTokenCipher
+import com.jassam.smsgate.sim.SimInventory
+import com.jassam.smsgate.ui.onboarding.Oem
+import com.jassam.smsgate.ui.onboarding.OemGuidance
+import com.jassam.smsgate.ui.onboarding.OnboardingPrefs
+import com.jassam.smsgate.ui.pairing.Pairer
+import com.jassam.smsgate.ui.pairing.PlayServices
+import com.jassam.smsgate.ui.pairing.PostPairingHook
 import okhttp3.OkHttpClient
 
 /**
@@ -53,6 +61,34 @@ class AppGraph(context: Context) {
 
     /** A client for the paired server, or null when unpaired. */
     suspend fun pairedApi(): DeviceApi? = credentialStore.serverUrl()?.let(::deviceApi)
+
+    /** Active SIMs for register/heartbeat (empty without READ_PHONE_STATE). */
+    val simInventory: SimInventory by lazy { SimInventory(app) }
+
+    /** Onboarding flags (checklist done, permissions asked, OEM step done). */
+    val onboardingPrefs: OnboardingPrefs by lazy { OnboardingPrefs(app) }
+
+    /** The OEM battery guidance step for this phone (D12), or null on stock-like phones. */
+    val oem: Oem? by lazy { OemGuidance.detect(Build.MANUFACTURER, Build.BRAND) }
+
+    /**
+     * Runs once credentials are stored after pairing.
+     * TODO(A6): schedule the periodic SyncWorker (heartbeat + pending catch-up) and
+     * enqueue an immediate sync through work/Scheduler.kt once it exists.
+     */
+    val postPairingHook: PostPairingHook = PostPairingHook { }
+
+    /** Registers this phone and stores its credentials (pairing screen). */
+    fun pairer(): Pairer = Pairer(
+        normalizeServerUrl = ::normalizeServerUrl,
+        apiFactory = ::deviceApi,
+        credentials = credentialStore,
+        sims = simInventory::activeSims,
+        fcmToken = PlayServices::fcmToken,
+        appVersion = BuildConfig.VERSION_NAME,
+        postPairing = postPairingHook,
+        warn = { Log.w("SmsGate", it) },
+    )
 }
 
 val Context.appGraph: AppGraph get() = (applicationContext as App).graph

@@ -148,6 +148,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
     implementation(libs.play.services.code.scanner)
+    implementation(libs.play.services.base)
     implementation(libs.profileinstaller)
     baselineProfile(project(":baselineprofile"))
 
