@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { isApiError } from '../api/client'
 import { errorCopy } from '../api/errors'
@@ -88,6 +88,18 @@ export function Overview() {
   const stats = useStats()
   const recent = useMessages({}, { limit: RECENT_LIMIT })
   const recentRows = useMemo(() => recent.data?.pages[0]?.data.slice(0, RECENT_LIMIT), [recent.data])
+
+  // The recent list polls only while a row is in flight; messages sent from
+  // elsewhere (the API) show up when the polled month total moves.
+  const monthTotal = stats.data?.month.total
+  const lastTotal = useRef(monthTotal)
+  const refetchRecent = recent.refetch
+  useEffect(() => {
+    if (monthTotal === undefined) return
+    const prev = lastTotal.current
+    lastTotal.current = monthTotal
+    if (prev !== undefined && prev !== monthTotal) void refetchRecent()
+  }, [monthTotal, refetchRecent])
 
   const setup =
     devices.data && keys.data && !(stats.isPending && recent.isPending)
@@ -237,12 +249,12 @@ interface StatCardProps {
   footer?: ReactNode
 }
 
-/** One stat: a small heading, a big value, and a footnote. A labelled region. */
+/** One stat: a small heading, a big value, and a footnote. A labelled group. */
 function StatCard({ title, icon, iconTone = 'brand', badge, children, footer }: StatCardProps) {
   const id = useId()
   return (
     <Card
-      role="region"
+      role="group"
       aria-labelledby={id}
       padding="none"
       className="flex min-w-0 flex-col gap-3 p-5 animate-fade-in motion-reduce:animate-none"
@@ -540,21 +552,23 @@ function RecentMessages({ query, rows, devices }: { query: RecentQuery; rows: Me
   }
 
   return (
-    <Card role="region" aria-labelledby={id} padding="none" className="overflow-hidden">
-      <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 md:px-6">
-        <div className="min-w-0">
-          <h2 id={id} className="text-[15px] font-semibold tracking-tight text-fg">
-            Recent messages
-          </h2>
-          <p className="mt-0.5 text-sm text-fg-muted">The newest {RECENT_LIMIT}, updated live.</p>
+    <section aria-labelledby={id}>
+      <Card padding="none" className="overflow-hidden">
+        <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 md:px-6">
+          <div className="min-w-0">
+            <h2 id={id} className="text-[15px] font-semibold tracking-tight text-fg">
+              Recent messages
+            </h2>
+            <p className="mt-0.5 text-sm text-fg-muted">The newest {RECENT_LIMIT}, refreshed automatically.</p>
+          </div>
+          <Link to="/messages" className={cx(buttonStyles('ghost', 'sm'), 'group/link shrink-0')}>
+            View all
+            <ArrowRightIcon className="size-3.5 transition-transform duration-150 motion-safe:group-hover/link:translate-x-0.5 motion-reduce:transition-none" />
+          </Link>
         </div>
-        <Link to="/messages" className={cx(buttonStyles('ghost', 'sm'), 'group/link shrink-0')}>
-          View all
-          <ArrowRightIcon className="size-3.5 transition-transform duration-150 motion-safe:group-hover/link:translate-x-0.5 motion-reduce:transition-none" />
-        </Link>
-      </div>
-      {body}
-    </Card>
+        {body}
+      </Card>
+    </section>
   )
 }
 

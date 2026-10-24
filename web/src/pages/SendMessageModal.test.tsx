@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, mockFetch, type MockRoute } from '../test/mockFetch'
-import { renderApp, unverifiedMe, verifiedMe } from '../test/renderApp'
+import { deferred, renderApp, unverifiedMe, verifiedMe } from '../test/renderApp'
 import { errorCopy } from '../api/errors'
 import type { Device, Message } from '../api/types'
 
@@ -235,5 +235,66 @@ describe('SendMessageModal', () => {
     const button = screen.getByRole('button', { name: /send test message/i })
     expect(button).toHaveAttribute('aria-disabled', 'true')
     expect(button).toHaveAccessibleDescription(/verify your email to send messages/i)
+  })
+
+  it('409 idempotency_mismatch: explains, refreshes the log, and starts a new message on request', async () => {
+    const user = userEvent.setup()
+    const { m } = setup(
+      { method: 'POST', path: '/app/messages', ...apiError(409, 'idempotency_mismatch'), once: true },
+      { method: 'POST', path: '/app/messages', status: 202, json: queued },
+      { path: '/app/stats', json: {} },
+    )
+    const dialog = await openForm(user)
+    await fill(user, dialog, '+37060000000', 'Edited')
+    const before = m.callsTo('GET', '/app/messages?limit=50').length
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(errorCopy('idempotency_mismatch'))
+    await waitFor(() => expect(m.callsTo('GET', '/app/messages?limit=50').length).toBeGreaterThan(before))
+
+    await user.click(within(dialog).getByRole('button', { name: /start a new message/i }))
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialog).getByLabelText('Message')).toHaveValue('')
+    expect(within(dialog).getByLabelText('To')).toHaveValue('')
+    await fill(user, dialog, '+37060000000', 'Again')
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const [a, b] = m.callsTo('POST', '/app/messages')
+    expect(a!.headers['idempotency-key']).not.toBe(b!.headers['idempotency-key'])
+  })
+
+  it('does not prepend the queued message to a list filtered to another status', async () => {
+    const user = userEvent.setup()
+    const gate = deferred()
+    mockFetch([
+      { method: 'POST', path: '/app/messages', status: 202, json: queued },
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices } },
+      { path: '/app/messages?limit=50&status=delivered', json: { data: [msg('m1')] }, once: true },
+      // The refetch after sending is held, so only the optimistic update could show it.
+      { path: '/app/messages?limit=50&status=delivered', json: { data: [msg('m1')] }, until: gate.promise },
+    ])
+    renderApp('/messages?status=delivered')
+    const dialog = await openForm(user)
+    await fill(user, dialog, '+37060000000', 'Hi')
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /queued message/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /message to/i })).toHaveLength(1)
+    gate.resolve()
+  })
+
+  it('highlights the sent row once, then clears the highlight', async () => {
+    const user = userEvent.setup()
+    setup(
+      { method: 'POST', path: '/app/messages', status: 202, json: queued },
+      { path: '/app/messages?limit=50', json: { data: [msg('m1')] }, once: true },
+      { path: '/app/messages?limit=50', json: { data: [queued, msg('m1')] } },
+    )
+    const dialog = await openForm(user)
+    await fill(user, dialog, '+37060000000', 'Hi')
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    const row = (await screen.findByRole('button', { name: /queued message/i })).closest('li')!
+    expect(row).toHaveAttribute('data-flash', 'true')
+    await waitFor(() => expect(row).not.toHaveAttribute('data-flash'), { timeout: 3000 })
   })
 })

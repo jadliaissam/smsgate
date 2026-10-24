@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { isApiError } from '../api/client'
 import { errorCopy } from '../api/errors'
-import { useDevices, useMessages } from '../api/queries'
+import { useDevices, useMessage, useMessages } from '../api/queries'
 import type { Message, MessageStatus } from '../api/types'
 import { FormAlert } from '../layout/FormAlert'
 import { ArrowRightIcon, ChevronDownIcon, MessageIcon, PhoneIcon, SendIcon } from '../layout/icons'
@@ -17,10 +17,14 @@ import { AlertIcon } from '../ui/icons'
 import { messageStatuses, statusFill, statusLabel } from '../ui/messageStatus'
 import { Skeleton } from '../ui/Skeleton'
 import { useNow } from '../ui/time'
+import { useToast } from '../ui/Toast'
 import { MessageDrawer } from './MessageDrawer'
 import { MessageListHeader, MessageRow } from './MessageRow'
 import type { MessagesSearch } from './messagesSearch'
 import { SendMessageModal } from './SendMessageModal'
+
+/** How long a just-sent row stays highlighted (the `flash` animation). */
+const FLASH_MS = 1800
 
 const SEND_REASON = 'Verify your email to send messages. Check your inbox for the link.'
 
@@ -33,27 +37,66 @@ export function Messages() {
   const now = useNow(30_000)
 
   // A fresh modal per opening: a new Idempotency-Key and empty fields.
-  // `?send` (from the Overview) opens it on arrival; `?message=<id>` opens
-  // that message's drawer once the list has it.
+  // `?send` (from the Overview) opens it on arrival.
   const [sendSession, setSendSession] = useState(0)
   const [sendOpen, setSendOpen] = useState(() => search.send === true && me.email_verified)
   const [flashId, setFlashId] = useState<string>()
-  // The drawer keeps its message while it animates out.
-  const [selectedId, setSelectedId] = useState<string | undefined>(search.message)
+  // A row picked from the list; the drawer keeps it while it animates out.
+  const [selectedId, setSelectedId] = useState<string>()
   const [selectedSnapshot, setSelectedSnapshot] = useState<Message | null>(null)
-  const [drawerOpen, setDrawerOpen] = useState(search.message !== undefined)
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const names = useMemo(() => new Map(devices.data?.map((d) => [d.id, d.name])), [devices.data])
   const rows = useMemo(() => messages.data?.pages.flatMap((p) => p.data) ?? [], [messages.data])
   // Polling refreshes the open message too.
   const selected = rows.find((m) => m.id === selectedId) ?? selectedSnapshot
 
+  // `?message=<id>` (from the Overview, or Back/Forward) opens that message's
+  // drawer, driven by the URL: from the loaded list once it has settled, else
+  // fetched on its own. Nothing opens until the message is known.
+  const linkId = search.message
+  const listSettled = !messages.isPending && !messages.isPlaceholderData
+  const linkRow = linkId === undefined ? undefined : rows.find((m) => m.id === linkId)
+  const fetchLinked = linkId !== undefined && listSettled && !linkRow
+  const single = useMessage(linkId, { enabled: fetchLinked })
+  const linked = linkRow ?? (fetchLinked ? single.data : undefined)
+  const shown = linkId !== undefined ? (linked ?? null) : selected
+  const shownOpen = linkId !== undefined ? linked !== undefined : drawerOpen
   const filtered = search.status !== undefined || search.device !== undefined
   const setFilters = (next: MessagesSearch) => void navigate({ search: (prev) => ({ ...prev, ...next }), replace: true })
   // Drop a one-shot `send` / `message` param once its overlay closes.
   const clearParam = (key: 'send' | 'message') => {
     if (search[key] !== undefined) void navigate({ search: (prev) => ({ ...prev, [key]: undefined }), replace: true })
   }
+
+  // An unverified user cannot send: drop the `send` request instead of
+  // carrying it along in the URL.
+  const dropSend = search.send === true && !me.email_verified
+  useEffect(() => {
+    if (dropSend) void navigate({ search: (prev) => ({ ...prev, send: undefined }), replace: true })
+  }, [dropSend, navigate])
+
+  // A deep-linked message that doesn't exist (or can't load): say so and
+  // drop the param.
+  const toast = useToast()
+  const linkError = fetchLinked ? single.error : null
+  useEffect(() => {
+    if (!linkError) return
+    if (isApiError(linkError, 'message_not_found')) {
+      toast.error('Message not found', 'It may belong to another account, or the link is wrong.')
+    } else {
+      toast.error('Couldn’t open the message', errorCopy(isApiError(linkError) ? linkError.code : 'default'))
+    }
+    void navigate({ search: (prev) => ({ ...prev, message: undefined }), replace: true })
+  }, [linkError, navigate, toast])
+
+  // The just-sent row is highlighted once, not again whenever it remounts.
+  useEffect(() => {
+    if (flashId === undefined) return
+    const t = setTimeout(() => setFlashId(undefined), FLASH_MS)
+    return () => clearTimeout(t)
+  }, [flashId])
+
   const openSend = () => {
     setSendSession((n) => n + 1)
     setSendOpen(true)
@@ -99,9 +142,16 @@ export function Messages() {
           <p className="mt-1.5 max-w-sm text-sm text-pretty text-fg-muted">
             {errorCopy(isApiError(messages.error) ? messages.error.code : 'default')}
           </p>
-          <Button variant="secondary" className="mt-6" loading={messages.isFetching} onClick={() => void messages.refetch()}>
-            Retry
-          </Button>
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            <Button variant="secondary" loading={messages.isFetching} onClick={() => void messages.refetch()}>
+              Retry
+            </Button>
+            {filtered && (
+              <Button variant="ghost" onClick={() => setFilters({ status: undefined, device: undefined })}>
+                Clear filters
+              </Button>
+            )}
+          </div>
         </Card>
       ) : !messages.data ? (
         <MessagesSkeleton />
@@ -203,13 +253,18 @@ export function Messages() {
       />
 
       <MessageDrawer
-        open={drawerOpen}
+        open={shownOpen}
         onClose={() => {
+          // Keep the shown message while the drawer animates out.
+          if (linkId !== undefined && shown) {
+            setSelectedId(shown.id)
+            setSelectedSnapshot(shown)
+          }
           setDrawerOpen(false)
           clearParam('message')
         }}
-        message={selected}
-        deviceName={selected ? names.get(selected.device_id) : undefined}
+        message={shown}
+        deviceName={shown ? names.get(shown.device_id) : undefined}
       />
     </>
   )

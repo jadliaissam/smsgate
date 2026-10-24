@@ -2,14 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, mockFetch } from '../test/mockFetch'
-import { deferred, locationOf, renderApp, verifiedMe } from '../test/renderApp'
+import { deferred, locationOf, renderApp, unverifiedMe, verifiedMe } from '../test/renderApp'
 import type { Device, Message } from '../api/types'
 
 const MIN = 60_000
+const D1 = '0190a1b2-0000-4000-8000-000000000001'
+const D2 = '0190a1b2-0000-4000-8000-000000000002'
+/** A UUID-shaped message id (the `?message=` param only accepts those). */
+const M7 = '0190a1b2-0000-4000-8000-0000000000a7'
 
 const devices: Device[] = [
   {
-    id: 'd1',
+    id: D1,
     name: 'Pixel 8',
     online: true,
     sims: [],
@@ -18,7 +22,7 @@ const devices: Device[] = [
     last_seen_at: new Date().toISOString(),
   },
   {
-    id: 'd2',
+    id: D2,
     name: 'Old Galaxy',
     online: false,
     sims: [],
@@ -32,7 +36,7 @@ function msg(id: string, over: Partial<Message> = {}): Message {
   const created = Date.now() - 3 * MIN
   return {
     id,
-    device_id: 'd1',
+    device_id: D1,
     sim_slot: null,
     to: '+37061234567',
     status: 'delivered',
@@ -98,7 +102,7 @@ describe('Messages', () => {
       ...base,
       { path: '/app/messages?limit=50', json: { data: [msg('m1'), failed] } },
       { path: '/app/messages?limit=50&status=failed', json: { data: [failed] } },
-      { path: '/app/messages?limit=50&status=failed&device_id=d1', json: { data: [failed] } },
+      { path: `/app/messages?limit=50&status=failed&device_id=${D1}`, json: { data: [failed] } },
     ])
     const { router } = renderApp('/messages')
     await screen.findByRole('button', { name: /delivered message/i })
@@ -110,12 +114,12 @@ describe('Messages', () => {
     await waitFor(() => expect(m.callsTo('GET', '/app/messages?limit=50&status=failed')).toHaveLength(1))
     await waitFor(() => expect(screen.queryByRole('button', { name: /delivered message/i })).not.toBeInTheDocument())
 
-    await user.selectOptions(screen.getByRole('combobox', { name: /filter by device/i }), 'd1')
-    await waitFor(() => expect(locationOf(router)).toBe('/messages?status=failed&device=d1'))
-    await waitFor(() => expect(m.callsTo('GET', '/app/messages?limit=50&status=failed&device_id=d1')).toHaveLength(1))
+    await user.selectOptions(screen.getByRole('combobox', { name: /filter by device/i }), D1)
+    await waitFor(() => expect(locationOf(router)).toBe(`/messages?status=failed&device=${D1}`))
+    await waitFor(() => expect(m.callsTo('GET', `/app/messages?limit=50&status=failed&device_id=${D1}`)).toHaveLength(1))
 
     await user.click(within(statusGroup).getByRole('button', { name: 'All' }))
-    await waitFor(() => expect(locationOf(router)).toBe('/messages?device=d1'))
+    await waitFor(() => expect(locationOf(router)).toBe(`/messages?device=${D1}`))
   })
 
   it('reads filters from the URL and ignores unknown statuses', async () => {
@@ -244,5 +248,149 @@ describe('Messages', () => {
     await user.click(await screen.findByRole('button', { name: /clear filters/i }))
     await waitFor(() => expect(locationOf(router)).toBe('/messages'))
     expect(await screen.findByRole('button', { name: /delivered message/i })).toBeInTheDocument()
+  })
+
+  it('ignores device and message params that are not UUIDs', async () => {
+    const m = mockFetch([...base, { path: '/app/messages?limit=50', json: { data: [msg('m1')] } }])
+    const { router } = renderApp('/messages?device=d1&message=nope')
+    await screen.findByRole('button', { name: /delivered message/i })
+    expect(m.callsTo('GET', '/app/messages?limit=50')).toHaveLength(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(locationOf(router)).toBe('/messages'))
+  })
+
+  it('the error state offers to clear active filters', async () => {
+    const user = userEvent.setup()
+    mockFetch([
+      ...base,
+      { path: '/app/messages?limit=50&status=failed', ...apiError(500, 'internal') },
+      { path: '/app/messages?limit=50', json: { data: [msg('m1')] } },
+    ])
+    const { router } = renderApp('/messages?status=failed')
+    const alert = (await screen.findByText(/couldn’t load your messages/i)).closest('[role="alert"]') as HTMLElement
+    await user.click(within(alert).getByRole('button', { name: /clear filters/i }))
+    await waitFor(() => expect(locationOf(router)).toBe('/messages'))
+    expect(await screen.findByRole('button', { name: /delivered message/i })).toBeInTheDocument()
+  })
+
+  describe('polling bounds', () => {
+    const sentAgo = (ms: number) =>
+      msg('m6', { status: 'sent', delivered_at: null, sent_at: new Date(Date.now() - ms).toISOString() })
+
+    async function pollsAfter(list: Message[]) {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const m = mockFetch([...base, { path: '/app/messages?limit=50', json: { data: list } }])
+      renderApp('/messages')
+      await screen.findAllByRole('button', { name: /message to/i })
+      await act(() => vi.advanceTimersByTimeAsync(11_000))
+      return m.callsTo('GET', '/app/messages?limit=50').length - 1
+    }
+
+    it('an old sent message (no delivery report) does not poll', async () => {
+      expect(await pollsAfter([sentAgo(20 * MIN), msg('m1')])).toBe(0)
+    })
+
+    it('a recently sent message polls', async () => {
+      expect(await pollsAfter([sentAgo(2 * MIN)])).toBe(2)
+    })
+
+    it('a dispatched message past the device-lost window does not poll', async () => {
+      const created = Date.now() - 60 * MIN
+      const lost = msg('m7', {
+        status: 'dispatched',
+        created_at: new Date(created).toISOString(),
+        expires_at: new Date(created + 5 * MIN).toISOString(),
+        sent_at: null,
+        delivered_at: null,
+      })
+      expect(await pollsAfter([lost])).toBe(0)
+    })
+
+    it('a dispatched message within the window polls', async () => {
+      const lost = msg('m7', { status: 'dispatched', sent_at: null, delivered_at: null })
+      expect(await pollsAfter([lost])).toBe(2)
+    })
+
+    it('refetches every loaded page once per interval', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const queued = msg('m5', { status: 'queued', dispatched_at: null, sent_at: null, delivered_at: null })
+      const m = mockFetch([
+        ...base,
+        { path: '/app/messages?limit=50', json: { data: [queued], next_before: 'm5' } },
+        { path: '/app/messages?limit=50&before=m5', json: { data: [msg('m1', { to: '+37060000003' })], next_before: null } },
+      ])
+      renderApp('/messages')
+      await screen.findByRole('button', { name: /queued message/i })
+      await user.click(screen.getByRole('button', { name: /load more/i }))
+      await screen.findByRole('button', { name: /\+37060000003/ })
+      const first = m.callsTo('GET', '/app/messages?limit=50').length
+      const second = m.callsTo('GET', '/app/messages?limit=50&before=m5').length
+      await act(() => vi.advanceTimersByTimeAsync(5_000))
+      await waitFor(() => expect(m.callsTo('GET', '/app/messages?limit=50&before=m5')).toHaveLength(second + 1))
+      expect(m.callsTo('GET', '/app/messages?limit=50')).toHaveLength(first + 1)
+    })
+  })
+
+  describe('?message deep link', () => {
+    it('shows no dialog while loading, then opens the listed message', async () => {
+      const gate = deferred()
+      mockFetch([
+        ...base,
+        { path: '/app/messages?limit=50', json: { data: [msg(M7, { to: '+37060000077' })] }, until: gate.promise },
+      ])
+      renderApp(`/messages?message=${M7}`)
+      expect(await screen.findByTestId('messages-skeleton')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      gate.resolve()
+      const drawer = await screen.findByRole('dialog')
+      expect(within(drawer).getByRole('heading', { name: '+37060000077' })).toBeInTheDocument()
+    })
+
+    it('fetches a message that is not in the loaded list', async () => {
+      const m = mockFetch([
+        ...base,
+        { path: '/app/messages?limit=50', json: { data: [msg('m1')] } },
+        { path: `/app/messages/${M7}`, json: msg(M7, { to: '+37060000077' }) },
+      ])
+      renderApp(`/messages?message=${M7}`)
+      const drawer = await screen.findByRole('dialog')
+      expect(within(drawer).getByRole('heading', { name: '+37060000077' })).toBeInTheDocument()
+      expect(m.callsTo('GET', `/app/messages/${M7}`)).toHaveLength(1)
+    })
+
+    it('a 404 shows a toast, no dialog, and drops the param', async () => {
+      mockFetch([
+        ...base,
+        { path: '/app/messages?limit=50', json: { data: [msg('m1')] } },
+        { path: `/app/messages/${M7}`, ...apiError(404, 'message_not_found') },
+      ])
+      const { router } = renderApp(`/messages?message=${M7}`)
+      expect(await screen.findByText('Message not found')).toBeInTheDocument()
+      await waitFor(() => expect(locationOf(router)).toBe('/messages'))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('closing the drawer drops the param', async () => {
+      const user = userEvent.setup()
+      mockFetch([...base, { path: '/app/messages?limit=50', json: { data: [msg(M7)] } }])
+      const { router } = renderApp(`/messages?message=${M7}`)
+      await screen.findByRole('dialog')
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(locationOf(router)).toBe('/messages'))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    })
+  })
+
+  it('?send=true for an unverified user opens nothing and drops the param', async () => {
+    mockFetch([
+      { path: '/app/me', json: unverifiedMe },
+      { path: '/app/devices', json: { data: devices } },
+      { path: '/app/messages?limit=50', json: { data: [msg('m1')] } },
+    ])
+    const { router } = renderApp('/messages?send=true')
+    await screen.findByRole('button', { name: /delivered message/i })
+    await waitFor(() => expect(locationOf(router)).toBe('/messages'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

@@ -15,7 +15,6 @@ import { api, ApiError, apiResponse, isApiError } from './client'
 import { errorCopy } from './errors'
 import { clearResendCooldown } from './resendCooldown'
 import {
-  terminalStatuses,
   type ApiKey,
   type CreatedApiKey,
   type Device,
@@ -341,14 +340,45 @@ function listKey(k: MessagesListKey) {
   return [...messagesKey, 'list', k] as const
 }
 
+/**
+ * How long after its `expires_at` a dispatched message can still change: the
+ * backend marks a phone that never reported back `device_lost` 15 min after
+ * expiry (DEVICE_LOST_AFTER); 5 min of slack covers the sweeper interval.
+ */
+export const DISPATCHED_PENDING_MS = 20 * 60_000
+/**
+ * How long after `sent_at` a sent message is watched for a delivery report.
+ * Some carriers never send one, so a sent message is not polled forever.
+ */
+export const SENT_PENDING_MS = 15 * 60_000
+
+/**
+ * True while a message can still change status on its own: queued (the
+ * backend expires it), dispatched until shortly after the device-lost
+ * deadline, sent for a while awaiting a delivery report.
+ */
+export function isPending(m: Message, now = Date.now()): boolean {
+  switch (m.status) {
+    case 'queued':
+      return true
+    case 'dispatched':
+      return new Date(m.expires_at).getTime() + DISPATCHED_PENDING_MS > now
+    case 'sent':
+      return new Date(m.sent_at ?? m.created_at).getTime() + SENT_PENDING_MS > now
+    default:
+      return false
+  }
+}
+
 function hasPending(data: MessagesData | undefined): boolean {
-  return !!data?.pages.some((p) => p.data.some((m) => !terminalStatuses.includes(m.status)))
+  const now = Date.now()
+  return !!data?.pages.some((p) => p.data.some((m) => isPending(m, now)))
 }
 
 /**
  * The messages log, newest first, paged with keyset cursors (`next_before`).
- * Polls every 5 s while any loaded message is not yet delivered, failed or
- * expired. Switching filters keeps the previous list on screen until the new
+ * Polls every 5 s (all loaded pages) while any loaded message can still
+ * change status (see isPending). Switching filters keeps the previous list on screen until the new
  * one arrives.
  */
 export function useMessages(filters: MessageFilters = {}, { limit = MESSAGES_PAGE_SIZE } = {}) {
@@ -360,6 +390,19 @@ export function useMessages(filters: MessageFilters = {}, { limit = MESSAGES_PAG
     getNextPageParam: (last) => last.next_before ?? undefined,
     placeholderData: keepPreviousData,
     refetchInterval: (q) => (hasPending(q.state.data) ? MESSAGES_POLL_MS : false),
+  })
+}
+
+/**
+ * GET /app/messages/{id}: one message, for a deep link (`?message=<id>`)
+ * whose message is not in the loaded list. Polls like the list while pending.
+ */
+export function useMessage(id: string | undefined, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: [...messagesKey, 'one', id] as const,
+    queryFn: ({ signal }) => api<Message>(`/app/messages/${encodeURIComponent(id!)}`, { signal }),
+    enabled: enabled && id !== undefined,
+    refetchInterval: (q) => (q.state.data && isPending(q.state.data) ? MESSAGES_POLL_MS : false),
   })
 }
 
@@ -397,6 +440,12 @@ export function useSendMessage() {
     onError: (err) => {
       if (isApiError(err, 'email_not_verified')) void qc.invalidateQueries({ queryKey: meKey })
       if (isApiError(err, 'device_not_found')) void qc.invalidateQueries({ queryKey: devicesKey })
+      // An earlier attempt with this key was queued (its response was lost)
+      // and the details were edited since: show the message that went out.
+      if (isApiError(err, 'idempotency_mismatch')) {
+        void qc.invalidateQueries({ queryKey: messagesKey })
+        void qc.invalidateQueries({ queryKey: statsKey })
+      }
     },
   })
 }

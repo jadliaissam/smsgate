@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Message } from '../api/types'
 import { ChevronDownIcon } from '../layout/icons'
 import { cx, focusRing } from '../ui/cx'
@@ -60,6 +61,9 @@ export interface MessageRowProps {
 /** One message in a list: status, masked recipient, device, created. Render inside a <ul>. */
 export function MessageRow({ message: m, deviceName, now, onSelect, flash = false, compact = false }: MessageRowProps) {
   const device = deviceName ?? 'Removed device'
+  // Once flashed, keep the class: switching back to fade-in would replay it.
+  const [flashed, setFlashed] = useState(flash)
+  if (flash && !flashed) setFlashed(true)
   const body = (
     <>
       <div className="col-start-2 row-start-1 flex justify-end md:col-auto md:row-auto md:justify-start">
@@ -103,7 +107,7 @@ export function MessageRow({ message: m, deviceName, now, onSelect, flash = fals
     <li
       data-message-id={m.id}
       data-flash={flash || undefined}
-      className={cx(flash ? 'animate-flash' : 'animate-fade-in', 'motion-reduce:animate-none')}
+      className={cx(flashed ? 'animate-flash' : 'animate-fade-in', 'motion-reduce:animate-none')}
     >
       {onSelect ? (
         <button

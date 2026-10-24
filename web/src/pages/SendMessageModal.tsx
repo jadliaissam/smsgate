@@ -66,7 +66,7 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
   const send = useSendMessage()
   const toast = useToast()
   const formId = useId()
-  const [idempotencyKey] = useState(newIdempotencyKey)
+  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey)
   const [phase, setPhase] = useState<Phase>('form')
   const [chosenDevice, setChosenDevice] = useState<string>()
   const [simSlot, setSimSlot] = useState<number | null>(null)
@@ -74,6 +74,8 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
   const [body, setBody] = useState('')
   const [ttl, setTtl] = useState(DEFAULT_TTL)
   const [errors, setErrors] = useState<FieldErrors>({})
+  // 409 idempotency_mismatch: an earlier attempt with this key was queued.
+  const [alreadyQueued, setAlreadyQueued] = useState(false)
 
   const list = devices.data
   // Default: the first online phone, else the first one.
@@ -89,6 +91,19 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
     setChosenDevice(id)
     setSimSlot(null)
     setErrors((e) => ({ ...e, device: undefined }))
+  }
+
+  /** A blank form with a new Idempotency-Key, for sending another message. */
+  const startNew = () => {
+    send.reset()
+    setIdempotencyKey(newIdempotencyKey())
+    setChosenDevice(undefined)
+    setSimSlot(null)
+    setTo('')
+    setBody('')
+    setTtl(DEFAULT_TTL)
+    setErrors({})
+    setAlreadyQueued(false)
   }
 
   const submit = (e: FormEvent) => {
@@ -118,6 +133,7 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
             setPhase('unverified')
             return
           }
+          if (code === 'idempotency_mismatch') setAlreadyQueued(true)
           setErrors({ [fieldOf[code] ?? 'form']: errorCopy(code) })
         },
       },
@@ -227,7 +243,16 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
             disabled={send.isPending}
           />
 
-          {errors.form && <FormAlert>{errors.form}</FormAlert>}
+          {errors.form && (
+            <div className="flex flex-col items-start gap-3">
+              <FormAlert>{errors.form}</FormAlert>
+              {alreadyQueued && (
+                <Button variant="secondary" size="sm" onClick={startNew}>
+                  Start a new message
+                </Button>
+              )}
+            </div>
+          )}
         </form>
       )}
     </Modal>
