@@ -595,13 +595,68 @@ func TestWSResync(t *testing.T) {
 	}
 	// Pretend the notification above was lost: replaying finds the still
 	// queued message and wakes the socket again.
-	a.Hub.Resync(context.Background(), time.Now().Add(-time.Minute))
+	if err := a.Hub.Resync(context.Background(), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	if m := read(t, c); m["type"] != "new" || m["message_id"] != id {
 		t.Fatalf("replayed frame %v", m)
 	}
 	// Messages older than the window are not replayed.
-	a.Hub.Resync(context.Background(), time.Now().Add(time.Hour))
+	if err := a.Hub.Resync(context.Background(), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if m, err := tryRead(c, 300*time.Millisecond); err == nil {
 		t.Fatalf("unexpected frame %v", m)
+	}
+}
+
+// After the LISTEN connection is lost and re-established, the listener has the
+// hub replay wakes for messages still queued (anything sent during the outage
+// would be among them).
+func TestWSListenerReplaysAfterReconnect(t *testing.T) {
+	a := apptest.New(t, noFallback, func(c *config.Config) { c.WSListenRetryMax = 50 * time.Millisecond })
+	f := setup(t, a)
+	c := dial(t, a, f.tok)
+	id := f.createMessage(t, a)
+	if m := read(t, c); m["message_id"] != id {
+		t.Fatalf("frame %v", m)
+	}
+	var pid int32
+	if err := a.Pool.QueryRow(context.Background(),
+		`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN %' AND pid <> pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Pool.Exec(context.Background(), "SELECT pg_terminate_backend($1)", pid); err != nil {
+		t.Fatal(err)
+	}
+	// The message is still queued, so the replay after the re-LISTEN wakes the socket again.
+	if m := read(t, c); m["type"] != "new" || m["message_id"] != id {
+		t.Fatalf("replayed frame %v", m)
+	}
+}
+
+// A backlog larger than the per-device replay cap must not overflow the socket's queue.
+func TestWSResyncCapsPerDevice(t *testing.T) {
+	a := apptest.New(t, noFallback)
+	f := setup(t, a)
+	c := dial(t, a, f.tok)
+	const n = 100
+	for range n {
+		f.createMessage(t, a)
+	}
+	for range n { // drain the live frames
+		read(t, c)
+	}
+	if err := a.Hub.Resync(context.Background(), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 64 {
+		if m := read(t, c); m["type"] != "new" {
+			t.Fatalf("replay frame %d: %v", i, m)
+		}
+	}
+	// Frames are ordered: a pong right after the 64th wake means there is no 65th.
+	if m := roundTrip(t, c, `{"type":"ping"}`); m["type"] != "pong" {
+		t.Fatalf("socket lost: %v", m)
 	}
 }

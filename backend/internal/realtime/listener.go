@@ -36,7 +36,11 @@ type Listener struct {
 
 	readyOnce sync.Once
 	ready     chan struct{}
-	lostAt    time.Time // when the connection was first lost since the last LISTEN; zero when healthy
+	// alive is the last time the connection was known healthy (LISTEN, a
+	// notification or a ping reply); lostAt is where the next Resync starts: the
+	// last healthy moment before the connection was lost, or the listener's
+	// creation until the first LISTEN. Zero once replayed. Listener goroutine only.
+	alive, lostAt time.Time
 }
 
 // NewListener builds a listener; cfg is copied.
@@ -44,7 +48,8 @@ func NewListener(cfg *pgx.ConnConfig, hub *Hub, log *slog.Logger, retryMax, ping
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Listener{cfg: cfg.Copy(), hub: hub, log: log, retryMax: retryMax, pingInterval: pingInterval, ready: make(chan struct{})}
+	now := hub.now()
+	return &Listener{cfg: cfg.Copy(), hub: hub, log: log, retryMax: retryMax, pingInterval: pingInterval, ready: make(chan struct{}), alive: now, lostAt: now}
 }
 
 // Ready is closed once the first LISTEN succeeded.
@@ -59,12 +64,8 @@ func (l *Listener) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		select {
-		case <-l.ready: // it was up once: anything sent from now on is lost until the next LISTEN
-			if l.lostAt.IsZero() {
-				l.lostAt = l.hub.now()
-			}
-		default:
+		if l.lostAt.IsZero() { // anything sent after the last healthy moment may be lost
+			l.lostAt = l.alive
 		}
 		if listened {
 			backoff = min(retryMin, l.retryMax)
@@ -100,11 +101,16 @@ func (l *Listener) session(ctx context.Context) (bool, error) {
 	}
 	l.readyOnce.Do(func() { close(l.ready) })
 	l.log.Info("notify listener ready")
-	if lost := l.lostAt; !lost.IsZero() {
-		l.lostAt = time.Time{}
+	l.alive = l.hub.now()
+	if !l.lostAt.IsZero() {
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		l.hub.Resync(rctx, lost)
+		err := l.hub.Resync(rctx, l.lostAt)
 		cancel()
+		if err != nil {
+			l.log.Warn("ws resync failed, retrying after the next reconnect", "err", err) // lostAt stays
+		} else {
+			l.lostAt = time.Time{}
+		}
 	}
 	for {
 		wctx, cancel := context.WithTimeout(ctx, l.pingInterval)
@@ -112,6 +118,7 @@ func (l *Listener) session(ctx context.Context) (bool, error) {
 		cancel()
 		switch {
 		case err == nil:
+			l.alive = l.hub.now()
 			l.dispatch(n.Channel, n.Payload)
 		case ctx.Err() != nil:
 			return true, ctx.Err()
@@ -122,6 +129,7 @@ func (l *Listener) session(ctx context.Context) (bool, error) {
 			if err != nil {
 				return true, err
 			}
+			l.alive = l.hub.now()
 		default:
 			return true, err
 		}

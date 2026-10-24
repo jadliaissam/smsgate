@@ -184,11 +184,17 @@ SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages 
 
 -- ListWakeReplay finds queued, unexpired messages created since @since for the
 -- given devices (those with a socket on this instance): wakes that may have
--- been missed while the LISTEN connection was down.
+-- been missed while the LISTEN connection was down. At most @per_device
+-- (oldest first, they expire first) per device, so a backlog cannot overflow a
+-- socket's queue; devices catch the rest up through pending.
 -- name: ListWakeReplay :many
-SELECT m.device_id, m.id
-FROM messages m
-WHERE m.device_id = ANY(@device_ids::uuid[]) AND m.status = 'queued'
-  AND m.expires_at > now() AND m.created_at >= @since::timestamptz
-ORDER BY m.created_at, m.id
-LIMIT @row_limit;
+SELECT r.device_id, r.id
+FROM (
+    SELECT m.device_id, m.id, m.created_at,
+           row_number() OVER (PARTITION BY m.device_id ORDER BY m.created_at, m.id) AS rn
+    FROM messages m
+    WHERE m.device_id = ANY(@device_ids::uuid[]) AND m.status = 'queued'
+      AND m.expires_at > now() AND m.created_at >= @since::timestamptz
+) r
+WHERE r.rn <= @per_device::int
+ORDER BY r.created_at, r.id;

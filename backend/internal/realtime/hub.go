@@ -54,6 +54,9 @@ const (
 // disconnected and catches up via pending.
 const maxQueue = 128
 
+// resyncPerDevice bounds the wakes Resync queues for one device: well under maxQueue.
+const resyncPerDevice = maxQueue / 2
+
 // bufSize is the read and write buffer of a hijacked socket. Device frames
 // are small; net/http's 4 KiB pair would otherwise be most of an idle
 // socket's memory.
@@ -464,7 +467,9 @@ func (h *Hub) setSeq(c *conn, seq int64) {
 // Resync wakes the sockets held here for messages still queued that were
 // created at or after since (minus ResyncMargin). Notifications sent while the
 // LISTEN connection was down are lost; a device deduplicates repeats by id.
-func (h *Hub) Resync(ctx context.Context, since time.Time) {
+// At most resyncPerDevice messages per device are replayed; the device's own
+// pending sync picks up the rest.
+func (h *Hub) Resync(ctx context.Context, since time.Time) error {
 	h.mu.Lock()
 	devices := make([]uuid.UUID, 0, len(h.conns))
 	for d := range h.conns {
@@ -472,19 +477,19 @@ func (h *Hub) Resync(ctx context.Context, since time.Time) {
 	}
 	h.mu.Unlock()
 	if len(devices) == 0 {
-		return
+		return nil
 	}
 	rows, err := h.opt.Q.ListWakeReplay(ctx, dbq.ListWakeReplayParams{
-		DeviceIds: devices, Since: since.Add(-h.opt.ResyncMargin), RowLimit: int32(min(h.opt.MaxConns, 1<<20)) * 10,
+		DeviceIds: devices, Since: since.Add(-h.opt.ResyncMargin), PerDevice: resyncPerDevice,
 	})
 	if err != nil {
-		h.opt.Log.Warn("ws resync", "err", err)
-		return
+		return err
 	}
 	for _, r := range rows {
 		h.Wake(r.DeviceID, r.ID)
 	}
 	h.opt.Log.Info("ws resync", "devices", len(devices), "wakes", len(rows))
+	return nil
 }
 
 // Shutdown closes every socket with 1001 and waits for the readers to finish
