@@ -121,6 +121,8 @@
   --animate-toast-out: toast-out 160ms var(--ease-in) both;
   --animate-check: check-draw 250ms var(--ease-out) both;
   --animate-ping-soft: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-success-pop: success-pop 420ms var(--ease-snappy) both;
+  --animate-glow: glow-breathe 3.2s ease-in-out infinite;
 
   @keyframes shimmer {
     from {
@@ -180,6 +182,28 @@
     }
     to {
       stroke-dashoffset: 0;
+    }
+  }
+  @keyframes success-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.3);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.08);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+  @keyframes glow-breathe {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
     }
   }
   @keyframes ping-soft {
