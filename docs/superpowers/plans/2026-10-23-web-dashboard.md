@@ -169,3 +169,47 @@ web/
 
 ## Out of scope
 Webhook settings UI and billing pages (backend build steps 4 and 6), WebSocket live updates (step 5), i18n.
+
+---
+
+## Post-MVP completion (2026-10-24)
+
+The MVP (WR7) shipped W1–W3, W4-lite, W5, W6 and W9. On 2026-10-24 the user asked to "complete the web implementation with all needed features" before the final review and deploy. This section closes the deferred work: W7 (messages log and test send) and W8 (docs page) as specified above, plus a usage endpoint and the full Overview. Webhooks and billing stay out of scope: they need backend build steps 4 and 6, and billing needs plan prices and Stripe credentials that do not exist yet.
+
+Order: W10 (backend) → W7 → W11 (Overview, uses W7's message queries and W10) → W8. Each task keeps every Global Constraint above. The Sidebar gains Messages and Docs items when W7 and W8 land (MVP comment removed).
+
+### Task 10 (W10): Backend — usage stats for the Overview
+
+**Files:** new query in `backend/internal/db/queries/messages.sql` (regenerate `dbq` with `make sqlc`), handler in `backend/internal/messages/` (new `stats.go`), route in `messages.AppRoutes`; tests alongside.
+
+**Interfaces:**
+- `GET /app/stats` (session auth, same middleware as `/app/messages`) →
+  ```json
+  {
+    "plan": {"id": "free", "name": "Free", "monthly_message_quota": 100, "max_devices": 1},
+    "month": {"start": "2026-10-01T00:00:00Z", "total": 12, "by_status": {"queued":0,"dispatched":0,"sent":3,"delivered":8,"failed":1,"expired":0}},
+    "last_24h": {"since": "2026-10-23T12:00:00Z", "total": 5, "by_status": {…same six keys, zeros included…}}
+  }
+  ```
+- `month.start` is the start of the current calendar month in UTC (the same window quota enforcement will use in build step 6). `last_24h.since` is `now - 24h`. Both use the service clock (`d.Now`) so tests can pin time.
+- One SQL query per window: `SELECT status, count(*) FROM messages WHERE user_id = $1 AND created_at >= $2 GROUP BY status` (served by the `(user_id, created_at, id)` index from migration 00004). Plan from the user's `plan_id` via existing `GetPlan`.
+- No new env vars (windows are fixed by product meaning, not tunables).
+
+- [ ] **Step 1: Failing tests:** `TestAppStats` (pinned clock; messages in this month, last month and the last 24 h across statuses → exact counts, all six status keys present with zeros; other user's messages not counted; plan fields from the seeded free plan); `TestAppStatsRequiresSession` (401).
+- [ ] **Step 2:** Run → FAIL; implement; `make sqlc`, `make test` → PASS; `gofmt`, `go vet` clean.
+- [ ] **Step 3:** Commit `feat(api): usage stats endpoint for the dashboard overview`.
+
+### Task 11 (W11): Overview stats and recent messages
+
+**Files:** `src/pages/Overview.tsx` (+ test), `src/api/{types,queries}.ts`.
+
+**Interfaces:**
+- `useStats()` → `GET /app/stats` (types `Stats`, `StatusCounts`), `staleTime` default, `refetchInterval: 15000` while the tab is visible.
+- Stat cards above the existing Get-started checklist: **Usage this month** (total / `monthly_message_quota` with a progress bar; warning tone ≥ 80 %, danger tone at ≥ 100 %; plan name badge); **Devices** (online / total from `useDevices()`, vs `max_devices`); **Delivery rate, last 24 h** = (sent + delivered) / (sent + delivered + failed + expired), "—" when the denominator is 0; **Last 24 h by status** (compact segmented bar with a legend, colors from the W7 status tone map).
+- **Recent messages:** the 5 newest from `GET /app/messages?limit=5` (reuse W7's row rendering and status badge), "View all" links to `/messages`; empty state links to the send-test flow on `/messages`.
+- Get-started checklist keeps working; its "send first message" step now completes when `month.total > 0` or any message exists, and links to `/messages`.
+- Every card: skeleton while loading, error state with Retry.
+
+- [ ] **Step 1: Failing tests:** `Overview.test.tsx` extended: skeletons first, then usage `12 / 100`, warning tone at 80 %, delivery rate math incl. the 0-denominator "—", recent list shows 5 rows and links to `/messages`, stats error → Retry refetches **[Review Focus 4]**.
+- [ ] **Step 2:** Run → FAIL; implement; → PASS.
+- [ ] **Step 3:** Commit `feat(web): overview usage, delivery rate and recent messages`.
