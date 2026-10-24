@@ -35,6 +35,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `HTTP_ADDR` | `:8080` | listen address |
 | `APP_ENV` | `prod` | `dev` enables LogMailer default and non-secure cookie default |
 | `PUBLIC_URL` | required (`http://localhost:8080` when `APP_ENV=dev`) | the **web app's** public origin, e.g. `https://sms.example.com`: verify links point at its SPA route `/verify` and the pairing QR carries it as the server address. The web app's nginx proxies `/app`, `/v1`, `/device` and `/healthz` to this API on the same origin. Must be `http(s)://host[:port][/path]` without query or fragment; one trailing `/` is trimmed |
+| `APP_REVISION` | `dev` | build revision reported by `GET /healthz` as `revision`; the image sets it from the `REVISION` build arg (the git sha in CI), so leave it unset |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_MAX_CONNS` / `DB_MIN_CONNS` | `10` / `1` | pool size |
 | `DB_MAX_CONN_IDLE_TIME` | `5m` | idle connection lifetime |
@@ -77,7 +78,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `SMTP_FROM` | empty | required when `MAILER=smtp`, e.g. `SMSGate <no-reply@example.com>` |
 | `SMTP_TIMEOUT` | `10s` | dial and whole-conversation timeout |
 | `RL_AUTH_PER_MIN` | `10` | requests/minute (burst equal) per client IP, shared by `POST /app/signup`, `/app/verify`, `/app/login` and `/device/v1/register`; `0` disables |
-| `RL_SEND_PER_MIN` | `60` | `POST /v1/messages` per API key; `0` disables |
+| `RL_SEND_PER_MIN` | `60` | `POST /v1/messages` per API key and `POST /app/messages` per user (separate budgets); `0` disables |
 | `RL_DEVICE_PER_MIN` | `120` | `/device/v1/*` (after registration) per device; `0` disables |
 | `RL_MAX_KEYS` | `100000` | max clients tracked per limiter (bounds memory; idle entries are evicted first) |
 | `TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32` | CIDRs/IPs whose `X-Forwarded-For` is believed (`none` = no proxy). The client IP is the rightmost `X-Forwarded-For` hop that is not itself a trusted proxy, so chained proxies (CapRover nginx, then the web app's nginx) are handled and client-supplied hops are ignored |
@@ -104,33 +105,31 @@ Dashboard-style calls use a session cookie; the public API uses an API key; devi
     curl "$B/v1/messages?limit=50" -H "Authorization: Bearer $KEY"      # {"data":[...],"next_before":...}
     curl $B/v1/devices -H "Authorization: Bearer $KEY"
 
+The dashboard uses the same message endpoints under session auth: `POST /app/messages` (requires a verified email, otherwise `403 email_not_verified`; per-user send limit), `GET /app/messages`, `GET /app/messages/{id}`, and `GET /app/stats` (plan, this calendar month's and the last 24 hours' message counts by status). `GET /healthz` returns `{"ok":true,"revision":"<APP_REVISION>"}` when the database is reachable.
+
 Request bodies must be sent with `Content-Type: application/json` (otherwise `415 unsupported_media_type`). Over a rate limit the API answers `429 rate_limited` with `Retry-After` (seconds). An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`. Errors are JSON with a stable `code`.
 
 ## Container and CapRover
 
 `backend/Dockerfile` is a multi-stage build (Go on Alpine, then `distroless/static:nonroot`, about 5 MB, `GOMEMLIMIT=96MiB`, port 8080). It builds with the classic builder, no BuildKit features. The image health check runs `/smsgate -healthcheck` (GET `/healthz` on the loopback address derived from `HTTP_ADDR`).
 
-    docker build -t smsgate-api backend
+    docker build --build-arg REVISION=$(git rev-parse HEAD) -t smsgate-api backend
     docker run -p 8080:8080 -e DATABASE_URL=... -e PUBLIC_URL=https://sms.example.com -e SMTP_HOST=... -e SMTP_FROM=... smsgate-api
 
 CapRover (the API sits behind the web dashboard's nginx, which serves the SPA and proxies `/app`, `/v1`, `/device` and `/healthz` to the API on the same origin):
 
 1. Create the API app, e.g. `smsgate-api`. Set **Container HTTP Port** to `8080` (the image listens on `HTTP_ADDR=:8080`). The app may stay internal (no public domain, no HTTPS needed): the web app's nginx reaches it at `http://srv-captain--smsgate-api:8080`. Enable WebSocket support now if you want it ready for the later realtime step.
 2. In App Configs set the environment variables: at least `DATABASE_URL`, `PUBLIC_URL` (the **web app's** public https origin, e.g. `https://sms.example.com`, not the API's internal address), `SMTP_HOST`, `SMTP_FROM` (+ credentials). For push wake-ups paste the Firebase service-account JSON into `FCM_CREDENTIALS_JSON` (simplest on CapRover), or mount a file and point `FCM_CREDENTIALS_FILE` at it; the file must be readable by uid 65532 (the distroless nonroot user).
-3. Deploy the `backend/` directory as the app root (it contains `captain-definition` with `./Dockerfile`), e.g. `cd backend && caprover deploy`.
+3. Deploy: normally CI does it (see [Deployment pipeline](#deployment-pipeline)). For a manual deploy of the same kind, `npx caprover deploy --caproverUrl ... --appToken ... --appName smsgate-api --imageName ghcr.io/<owner>/smsgate-api:<sha>`. Deploying the `backend/` directory as source (`captain-definition` with `./Dockerfile`, built on the server) still works as a fallback.
 4. Enable HTTPS and force HTTPS on the **web** app (the public entry point); the session cookie is `Secure` by default. The default `TRUSTED_PROXIES` (private ranges) covers CapRover's nginx and the web app's nginx, so rate limits see the real client IP from `X-Forwarded-For`.
 
-CI/CD (`.github/workflows/backend.yml`): every push and pull request touching `backend/` runs gofmt, `go vet`, a sqlc drift check, `go test -race` against Postgres 17, the smoke test and a Docker build. A push to `main` then deploys `backend/` to CapRover with the CapRover CLI. Set these in the GitHub repo (the job uses the `production` environment, where you can also require approval):
-
-- secret `CAPROVER_URL`: the CapRover dashboard URL, e.g. `https://captain.example.com`
-- secret `CAPROVER_APP_TOKEN`: in the app's Deployment tab, enable the App Token and copy it
-- variable `CAPROVER_APP`: the app name, e.g. `smsgate-api`
+CI (`.github/workflows/backend.yml`): every push and pull request touching `backend/` runs gofmt, `go vet`, a sqlc drift check, `go test -race` against Postgres 17, the smoke test and a Docker image build; a push to `main` also deploys (see below).
 
 Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
 
 ## Web dashboard deployment
 
-`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
+`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache, `/revision.txt` with the `REVISION` build arg, no-store), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -139,20 +138,35 @@ Migrations run automatically at startup under a Postgres advisory lock, so sever
 
 Both are substituted into `web/nginx/default.conf.template` at container start; nothing else is substituted, so nginx's own `$variables` are untouched.
 
-CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point), then deploy `web/` as the app root (it contains `captain-definition`), e.g. `cd web && caprover deploy`. Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
+CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point); CI deploys it (see [Deployment pipeline](#deployment-pipeline)). Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
 
 Local check against a locally running backend:
 
 ```sh
-docker build -t smsgate-web web
+docker build --build-arg REVISION=$(git rev-parse HEAD) -t smsgate-web web
 docker run --rm -p 8081:80 -e BACKEND_URL=http://host.docker.internal:8080 \
   -e NGINX_RESOLVER=<docker dns, e.g. the nameserver in the container's /etc/resolv.conf> smsgate-web
 ```
 
 `npm run build` runs `web/scripts/check-bundle.mjs` (postbuild), which fails if the entry JS chunk exceeds 200 KB gzip or the CSS exceeds 40 KB gzip.
 
-CI/CD (`.github/workflows/web.yml`): changes under `web/` run lint, typecheck, tests and build (with the bundle budget) plus a Docker build. A push to `main` deploys `web/` with the CapRover CLI (`production` environment):
+CI (`.github/workflows/web.yml`): changes under `web/` run lint, typecheck, tests and build (with the bundle budget) plus a Docker image build; a push to `main` also deploys (see below).
 
-- secret `CAPROVER_URL`: the CapRover dashboard URL (shared with the backend workflow)
-- secret `CAPROVER_WEB_APP_TOKEN`: the web app's App Token (Deployment tab)
-- variable `CAPROVER_WEB_APP`: the app name, default `smsgate-web`
+## Deployment pipeline
+
+Images are built on GitHub, never on the CapRover server. Each workflow (`backend.yml` for `backend/`, `web.yml` for `web/`) builds its image with `--build-arg REVISION=<git sha>`; on pull requests and other branches the image is only built. On a push to `main` it is pushed to GHCR as
+
+- `ghcr.io/<owner>/smsgate-api:<sha>` and `:latest`
+- `ghcr.io/<owner>/smsgate-web:<sha>` and `:latest`
+
+(`<owner>` lowercased). The `deploy` job (GitHub environment `production`, where approval can be required) then runs `npx caprover@2.4.4 deploy --appToken ... --appName ... --imageName ghcr.io/<owner>/smsgate-<app>:<sha>`, so CapRover only pulls and runs that exact image.
+
+The CapRover CLI returns before the new container is serving, so the job then polls the public web origin for up to 5 minutes (60 x 5 s) until it reports the deployed commit, and fails otherwise: the web job reads `<PUBLIC_WEB_URL>/revision.txt`, the backend job reads `revision` from `<PUBLIC_WEB_URL>/healthz` (the API app is internal and only reachable through the web app's proxy). A green deploy therefore means the new image is live.
+
+Prerequisites:
+
+- CapRover must be able to pull from GHCR: in CapRover, Cluster -> Docker Registry -> add a remote registry `ghcr.io` with a GitHub username and a personal access token with only `read:packages` (recommended; making the packages public also works).
+- GitHub repository secrets: `CAPROVER_URL` (dashboard URL, e.g. `https://captain.example.com`), `CAPROVER_APP_TOKEN` (API app, Deployment tab -> Enable App Token), `CAPROVER_WEB_APP_TOKEN` (same for the web app).
+- GitHub repository variables (optional): `CAPROVER_APP` (default `smsgate-api`), `CAPROVER_WEB_APP` (default `smsgate-web`), `PUBLIC_WEB_URL` (default `https://smsgate-web.captain-1.duckdns.org`).
+
+To roll back, redeploy an earlier image: `npx caprover deploy ... --imageName ghcr.io/<owner>/smsgate-<app>:<older sha>`.
