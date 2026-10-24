@@ -2,14 +2,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter'
 import './index.css'
-import { ToastProvider } from './ui/Toast'
-import { Placeholder } from './pages/Placeholder'
+import { App } from './App'
+import { createApp } from './router'
 
-// Temporary entry until the router lands (W3 replaces this with router.tsx).
+const app = createApp()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ToastProvider>
-      <Placeholder />
-    </ToastProvider>
+    <App app={app} />
   </StrictMode>,
 )

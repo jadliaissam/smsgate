@@ -6,9 +6,12 @@ import { join } from 'node:path'
 // danger, and the semantic aliases), never Tailwind's raw palette or
 // arbitrary color literals.
 const dir = join(import.meta.dirname)
-const sources = readdirSync(dir)
-  .filter((f) => /\.(tsx?|css)$/.test(f) && !/\.test\.tsx?$/.test(f))
-  .map((f) => ({ file: f, src: readFileSync(join(dir, f), 'utf8') }))
+// The ui kit plus the app's layout and pages: one discipline everywhere.
+const sources = ['.', '../layout', '../pages'].flatMap((sub) =>
+  readdirSync(join(dir, sub))
+    .filter((f) => /\.(tsx?|css)$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => ({ file: join(sub, f), src: readFileSync(join(dir, sub, f), 'utf8') })),
+)
 
 const palette =
   'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose'

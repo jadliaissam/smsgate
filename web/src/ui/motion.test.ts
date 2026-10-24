@@ -6,9 +6,12 @@ import { join } from 'node:path'
 // keyframe animation may run. Every motion utility used in a component must
 // be paired with the matching motion-reduce: reset in the same file.
 const dir = join(import.meta.dirname)
-const sources = readdirSync(dir)
-  .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
-  .map((f) => ({ file: f, src: readFileSync(join(dir, f), 'utf8') }))
+// The ui kit plus the app's layout and pages: one discipline everywhere.
+const sources = ['.', '../layout', '../pages'].flatMap((sub) =>
+  readdirSync(join(dir, sub))
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => ({ file: join(sub, f), src: readFileSync(join(dir, sub, f), 'utf8') })),
+)
 
 // Tokens already gated by motion-safe: or that are motion-reduce: resets do
 // not count as motion use.
