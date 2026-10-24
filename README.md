@@ -78,6 +78,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `WS_FCM_FALLBACK` | `10s` | a message woken over a WebSocket that is still unclaimed after this also gets an FCM push (half-dead sockets); `0` = never |
 | `WS_LISTEN_RETRY_MAX` | `30s` | max backoff (jittered, from 0.5 s) when reconnecting the dedicated `LISTEN` connection |
 | `WS_LISTEN_PING_INTERVAL` | `30s` | the idle `LISTEN` connection is health-checked this often |
+| `WS_RESYNC_MARGIN` | `1m` | after the `LISTEN` connection was down, connected devices are woken for messages queued since this long before the outage began (notifications sent during an outage are lost, so this replays them) |
 | `MAILER` | `smtp` (`log` when `APP_ENV=dev`) | `smtp` or `log`. `log` outside dev is allowed but logs a startup warning |
 | `SMTP_HOST` | empty | required when `MAILER=smtp` |
 | `SMTP_PORT` | `587` | STARTTLS when offered; port 465 uses implicit TLS |

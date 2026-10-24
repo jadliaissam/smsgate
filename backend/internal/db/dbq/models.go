@@ -36,6 +36,7 @@ type Device struct {
 	RevokedAt     *time.Time
 	CreatedAt     time.Time
 	WsConnectedAt *time.Time
+	WsSeq         *int64
 }
 
 type EmailToken struct {

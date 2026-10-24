@@ -43,7 +43,7 @@ func NewHub(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger, now func() 
 	return realtime.NewHub(realtime.Options{
 		Q: dbq.New(pool), Log: log, Now: now,
 		PingTimeout: cfg.WSPingTimeout, WriteTimeout: cfg.WSWriteTimeout, StaleAfter: cfg.WSStaleAfter,
-		FrameTimeout: cfg.WriteTimeout, MaxConns: cfg.WSMaxConns, ReadLimit: cfg.MaxBodyBytes,
+		FrameTimeout: cfg.WriteTimeout, MaxConns: cfg.WSMaxConns, ReadLimit: cfg.MaxBodyBytes, ResyncMargin: cfg.WSResyncMargin,
 	})
 }
 

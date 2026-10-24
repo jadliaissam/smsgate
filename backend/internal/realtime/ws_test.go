@@ -561,3 +561,47 @@ func TestWSWakeBurst(t *testing.T) {
 		t.Fatalf("socket not usable after burst: %v", m)
 	}
 }
+
+// A replaced connection that is still talking when its successor connects must
+// not rewrite or clear the successor's mark (touch and disconnect are tied to
+// the connection that owns the mark).
+func TestWSReplacedConnectionLeavesMarkAlone(t *testing.T) {
+	a := apptest.New(t, noFallback)
+	f := setup(t, a)
+	c1 := dial(t, a, f.tok)
+	c2 := dial(t, a, f.tok)
+	_ = closedWith(t, c1)
+	eventually(t, "replaced connection cleaned up", func() bool { return a.Hub.Len() == 1 })
+	time.Sleep(100 * time.Millisecond) // let its WSDisconnect run
+	if f.wsConnectedAt(t) == nil {
+		t.Fatal("replaced connection cleared the live connection's mark")
+	}
+	var seq *int64
+	if err := a.Pool.QueryRow(context.Background(), "SELECT ws_seq FROM devices WHERE id = $1", f.dev).Scan(&seq); err != nil || seq == nil {
+		t.Fatalf("ws_seq = %v, %v", seq, err)
+	}
+	_ = c2.Close(websocket.StatusNormalClosure, "")
+	eventually(t, "mark cleared by the owner", func() bool { return f.wsConnectedAt(t) == nil })
+}
+
+// Wakes sent while the LISTEN connection was down are replayed by Resync.
+func TestWSResync(t *testing.T) {
+	a := apptest.New(t, noFallback)
+	f := setup(t, a)
+	c := dial(t, a, f.tok)
+	id := f.createMessage(t, a)
+	if m := read(t, c); m["message_id"] != id {
+		t.Fatalf("frame %v", m)
+	}
+	// Pretend the notification above was lost: replaying finds the still
+	// queued message and wakes the socket again.
+	a.Hub.Resync(context.Background(), time.Now().Add(-time.Minute))
+	if m := read(t, c); m["type"] != "new" || m["message_id"] != id {
+		t.Fatalf("replayed frame %v", m)
+	}
+	// Messages older than the window are not replayed.
+	a.Hub.Resync(context.Background(), time.Now().Add(time.Hour))
+	if m, err := tryRead(c, 300*time.Millisecond); err == nil {
+		t.Fatalf("unexpected frame %v", m)
+	}
+}

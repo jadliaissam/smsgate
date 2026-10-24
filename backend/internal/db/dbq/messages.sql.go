@@ -760,6 +760,49 @@ func (q *Queries) ListPending(ctx context.Context, arg ListPendingParams) (ListP
 	return i, err
 }
 
+const listWakeReplay = `-- name: ListWakeReplay :many
+SELECT m.device_id, m.id
+FROM messages m
+WHERE m.device_id = ANY($1::uuid[]) AND m.status = 'queued'
+  AND m.expires_at > now() AND m.created_at >= $2::timestamptz
+ORDER BY m.created_at, m.id
+LIMIT $3
+`
+
+type ListWakeReplayParams struct {
+	DeviceIds []uuid.UUID
+	Since     time.Time
+	RowLimit  int32
+}
+
+type ListWakeReplayRow struct {
+	DeviceID uuid.UUID
+	ID       uuid.UUID
+}
+
+// ListWakeReplay finds queued, unexpired messages created since @since for the
+// given devices (those with a socket on this instance): wakes that may have
+// been missed while the LISTEN connection was down.
+func (q *Queries) ListWakeReplay(ctx context.Context, arg ListWakeReplayParams) ([]ListWakeReplayRow, error) {
+	rows, err := q.db.Query(ctx, listWakeReplay, arg.DeviceIds, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWakeReplayRow
+	for rows.Next() {
+		var i ListWakeReplayRow
+		if err := rows.Scan(&i.DeviceID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const messageStillQueued = `-- name: MessageStillQueued :one
 SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages WHERE id = $1
 `

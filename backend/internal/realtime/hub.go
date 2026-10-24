@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/smsgate/backend/internal/db/dbq"
 	"github.com/smsgate/backend/internal/httpx"
@@ -72,7 +74,8 @@ type Options struct {
 	StaleAfter   time.Duration // must exceed PingTimeout
 	FrameTimeout time.Duration // DB work per received frame
 	MaxConns     int
-	ReadLimit    int64 // max frame size in bytes
+	ReadLimit    int64         // max frame size in bytes
+	ResyncMargin time.Duration // Resync looks back this far before the outage began
 }
 
 // Hub is the registry of this instance's device sockets.
@@ -107,6 +110,11 @@ type conn struct {
 	closed   bool         // socket closing or closed: accept nothing more, guarded by qmu
 	lastSeen atomic.Int64 // unix nanos of the last received frame (hub clock)
 	reaped   bool         // guarded by Hub.mu
+
+	// seq is the DB-assigned order of this connection among the device's
+	// connections (0 until WSConnect returns); rival is the newest sequence
+	// announced by another connection meanwhile. Both guarded by Hub.mu.
+	seq, rival int64
 
 	touched time.Time // ws_connected_at last written; reader goroutine only
 }
@@ -174,14 +182,16 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, device uuid.UUID, fh
 	// on another instance closes. Registered first: a revoke committed after
 	// this finds the socket; one committed before makes this update miss.
 	ctx, cancel := context.WithTimeout(context.Background(), h.opt.FrameTimeout)
-	n, err := h.opt.Q.WSConnect(ctx, dbq.WSConnectParams{ID: device, At: &c.touched, ConnID: c.id.String()})
+	seq, err := h.opt.Q.WSConnect(ctx, dbq.WSConnectParams{ID: device, At: c.touched, ConnID: c.id.String()})
 	cancel()
 	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		c.enqueue(outFrame{data: frameRevoked, code: CloseRevoked, reason: "revoked"})
 	case err != nil:
 		h.opt.Log.Error("ws connect: mark device", "device_id", device, "err", err)
 		c.enqueue(outFrame{code: websocket.StatusInternalError, reason: "internal error"})
-	case n == 0:
-		c.enqueue(outFrame{data: frameRevoked, code: CloseRevoked, reason: "revoked"})
+	default:
+		h.setSeq(c, seq)
 	}
 	go h.read(c, fh)
 	return nil
@@ -260,7 +270,7 @@ func (h *Hub) read(c *conn, fh FrameHandler) {
 
 // touch refreshes ws_connected_at; a revoked device is told and closed.
 func (h *Hub) touch(ctx context.Context, c *conn, now time.Time) {
-	n, err := h.opt.Q.WSTouch(ctx, dbq.WSTouchParams{ID: c.device, At: &now})
+	n, err := h.opt.Q.WSTouch(ctx, dbq.WSTouchParams{ID: c.device, Seq: &c.seq, At: now})
 	if err != nil {
 		h.opt.Log.Warn("ws touch", "device_id", c.device, "err", err)
 		return
@@ -272,7 +282,7 @@ func (h *Hub) touch(ctx context.Context, c *conn, now time.Time) {
 }
 
 // cleanup unregisters c and clears ws_connected_at unless a newer connection
-// has rewritten it (best effort: WS_STALE_AFTER covers crashes).
+// owns it (best effort: WS_STALE_AFTER covers crashes).
 func (h *Hub) cleanup(c *conn) {
 	_ = c.ws.CloseNow()
 	h.mu.Lock()
@@ -282,8 +292,7 @@ func (h *Hub) cleanup(c *conn) {
 	h.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), h.opt.FrameTimeout)
 	defer cancel()
-	at := c.touched
-	if err := h.opt.Q.WSDisconnect(ctx, dbq.WSDisconnectParams{ID: c.device, At: &at}); err != nil {
+	if err := h.opt.Q.WSDisconnect(ctx, dbq.WSDisconnectParams{ID: c.device, Seq: &c.seq}); err != nil {
 		h.opt.Log.Warn("ws disconnect: clear mark", "device_id", c.device, "err", err)
 	}
 }
@@ -418,14 +427,64 @@ func (h *Hub) Revoke(device uuid.UUID) {
 	}
 }
 
-// Connected handles the announcement of connection connID for device (from
-// any instance): a held connection that is older is closed with 4001. Both
-// instances order connections the same way, so exactly one survives.
-func (h *Hub) Connected(device, connID uuid.UUID) {
-	c := h.get(device)
-	if c != nil && bytes.Compare(c.id[:], connID[:]) < 0 {
+// Connected handles the announcement of connection connID, numbered seq by
+// the database, for device (from any instance): a held connection with a lower
+// number is closed with 4001. The database numbers connections in commit order
+// of the device row, so every instance agrees on which one survives, whatever
+// its clock says.
+func (h *Hub) Connected(device, connID uuid.UUID, seq int64) {
+	h.mu.Lock()
+	c := h.conns[device]
+	replace := false
+	switch {
+	case c == nil || c.id == connID:
+	case c.seq == 0:
+		c.rival = max(c.rival, seq) // WSConnect still in flight: settled by setSeq
+	default:
+		replace = c.seq < seq
+	}
+	h.mu.Unlock()
+	if replace {
 		c.enqueue(outFrame{code: CloseReplaced, reason: "replaced"})
 	}
+}
+
+// setSeq records c's sequence number; c is closed if a newer connection was
+// announced before WSConnect returned.
+func (h *Hub) setSeq(c *conn, seq int64) {
+	h.mu.Lock()
+	c.seq = seq
+	replace := c.rival > seq
+	h.mu.Unlock()
+	if replace {
+		c.enqueue(outFrame{code: CloseReplaced, reason: "replaced"})
+	}
+}
+
+// Resync wakes the sockets held here for messages still queued that were
+// created at or after since (minus ResyncMargin). Notifications sent while the
+// LISTEN connection was down are lost; a device deduplicates repeats by id.
+func (h *Hub) Resync(ctx context.Context, since time.Time) {
+	h.mu.Lock()
+	devices := make([]uuid.UUID, 0, len(h.conns))
+	for d := range h.conns {
+		devices = append(devices, d)
+	}
+	h.mu.Unlock()
+	if len(devices) == 0 {
+		return
+	}
+	rows, err := h.opt.Q.ListWakeReplay(ctx, dbq.ListWakeReplayParams{
+		DeviceIds: devices, Since: since.Add(-h.opt.ResyncMargin), RowLimit: int32(min(h.opt.MaxConns, 1<<20)) * 10,
+	})
+	if err != nil {
+		h.opt.Log.Warn("ws resync", "err", err)
+		return
+	}
+	for _, r := range rows {
+		h.Wake(r.DeviceID, r.ID)
+	}
+	h.opt.Log.Info("ws resync", "devices", len(devices), "wakes", len(rows))
 }
 
 // Shutdown closes every socket with 1001 and waits for the readers to finish

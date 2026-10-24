@@ -181,3 +181,14 @@ GROUP BY status;
 -- expired (decides the FCM fallback for socket-connected devices).
 -- name: MessageStillQueued :one
 SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages WHERE id = @id;
+
+-- ListWakeReplay finds queued, unexpired messages created since @since for the
+-- given devices (those with a socket on this instance): wakes that may have
+-- been missed while the LISTEN connection was down.
+-- name: ListWakeReplay :many
+SELECT m.device_id, m.id
+FROM messages m
+WHERE m.device_id = ANY(@device_ids::uuid[]) AND m.status = 'queued'
+  AND m.expires_at > now() AND m.created_at >= @since::timestamptz
+ORDER BY m.created_at, m.id
+LIMIT @row_limit;

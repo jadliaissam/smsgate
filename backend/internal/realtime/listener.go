@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,14 +19,14 @@ import (
 const (
 	ChanWake   = "smsgate_wake"   // "<device_id>:<message_id>" (message created)
 	ChanRevoke = "smsgate_revoke" // "<device_id>" (device revoked)
-	ChanWS     = "smsgate_ws"     // "<device_id>:<conn_id>" (socket opened)
+	ChanWS     = "smsgate_ws"     // "<device_id>:<conn_id>:<seq>" (socket opened)
 )
 
 // Listener bridges Postgres notifications to a Hub over one dedicated
 // connection (outside the pool). It reconnects with jittered exponential
-// backoff and, after a reconnect, delivers nothing retroactively: devices
-// catch up through GET /device/v1/messages/pending when they (re)connect, and
-// the FCM fallback covers sockets that missed a wake.
+// backoff. Notifications sent while it was down are lost, so after each
+// re-LISTEN it has the hub replay wakes for messages queued since the outage
+// began (Hub.Resync); FCM and the device's own pending sync are the backstops.
 type Listener struct {
 	cfg          *pgx.ConnConfig
 	hub          *Hub
@@ -35,6 +36,7 @@ type Listener struct {
 
 	readyOnce sync.Once
 	ready     chan struct{}
+	lostAt    time.Time // when the connection was first lost since the last LISTEN; zero when healthy
 }
 
 // NewListener builds a listener; cfg is copied.
@@ -56,6 +58,13 @@ func (l *Listener) Run(ctx context.Context) {
 		listened, err := l.session(ctx)
 		if ctx.Err() != nil {
 			return
+		}
+		select {
+		case <-l.ready: // it was up once: anything sent from now on is lost until the next LISTEN
+			if l.lostAt.IsZero() {
+				l.lostAt = l.hub.now()
+			}
+		default:
 		}
 		if listened {
 			backoff = min(retryMin, l.retryMax)
@@ -91,6 +100,12 @@ func (l *Listener) session(ctx context.Context) (bool, error) {
 	}
 	l.readyOnce.Do(func() { close(l.ready) })
 	l.log.Info("notify listener ready")
+	if lost := l.lostAt; !lost.IsZero() {
+		l.lostAt = time.Time{}
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		l.hub.Resync(rctx, lost)
+		cancel()
+	}
 	for {
 		wctx, cancel := context.WithTimeout(ctx, l.pingInterval)
 		n, err := conn.WaitForNotification(wctx)
@@ -131,9 +146,13 @@ func (l *Listener) dispatch(channel, payload string) {
 			l.hub.Revoke(dev)
 		}
 	case ChanWS:
-		dev, connID, ok := pair(payload)
-		if ok {
-			l.hub.Connected(dev, connID)
+		dev, rest, ok := strings.Cut(payload, ":")
+		connID, seq, ok2 := strings.Cut(rest, ":")
+		d, err1 := uuid.Parse(dev)
+		c, err2 := uuid.Parse(connID)
+		n, err3 := strconv.ParseInt(seq, 10, 64)
+		if ok && ok2 && err1 == nil && err2 == nil && err3 == nil {
+			l.hub.Connected(d, c, n)
 		}
 	}
 }

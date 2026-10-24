@@ -173,7 +173,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 67 {
+	if len(v) != 68 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -220,6 +220,7 @@ func TestValidate(t *testing.T) {
 		{"WS_FCM_FALLBACK", func(c *Config) { c.WSFCMFallback = -time.Second }},
 		{"WS_LISTEN_RETRY_MAX", func(c *Config) { c.WSListenRetryMax = 0 }},
 		{"WS_LISTEN_PING_INTERVAL", func(c *Config) { c.WSListenPingInterval = 0 }},
+		{"WS_RESYNC_MARGIN", func(c *Config) { c.WSResyncMargin = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {

@@ -273,7 +273,7 @@ func (q *Queries) RenameDevice(ctx context.Context, arg RenameDeviceParams) (Ren
 
 const revokeDevice = `-- name: RevokeDevice :execrows
 WITH r AS (
-    UPDATE devices SET revoked_at = $1, fcm_token = NULL, ws_connected_at = NULL
+    UPDATE devices SET revoked_at = $1, fcm_token = NULL, ws_connected_at = NULL, ws_seq = NULL
     WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
     RETURNING id
 )
@@ -310,58 +310,63 @@ func (q *Queries) UpdateFCMToken(ctx context.Context, arg UpdateFCMTokenParams) 
 	return err
 }
 
-const wSConnect = `-- name: WSConnect :execrows
+const wSConnect = `-- name: WSConnect :one
 WITH d AS (
-    UPDATE devices SET ws_connected_at = $2
+    UPDATE devices SET ws_connected_at = $2::timestamptz, ws_seq = nextval('devices_ws_seq')
     WHERE id = $3 AND revoked_at IS NULL
-    RETURNING id
+    RETURNING id, ws_seq
 )
-SELECT pg_notify('smsgate_ws', d.id::text || ':' || $1::text) FROM d
+SELECT d.ws_seq::bigint AS seq
+FROM d, LATERAL (SELECT pg_notify('smsgate_ws', d.id::text || ':' || $1::text || ':' || d.ws_seq::text)) AS n
 `
 
 type WSConnectParams struct {
 	ConnID string
-	At     *time.Time
+	At     time.Time
 	ID     uuid.UUID
 }
 
-// WSConnect marks the device connected and announces the new connection
-// (LISTEN smsgate_ws, payload "<device_id>:<conn_id>") so an older socket on
-// another instance is closed. No row means the device is revoked.
+// WSConnect marks the device connected, takes the connection's sequence number
+// and announces it (LISTEN smsgate_ws, payload "<device_id>:<conn_id>:<seq>") so
+// an older socket on another instance is closed. No row means the device is
+// revoked.
 func (q *Queries) WSConnect(ctx context.Context, arg WSConnectParams) (int64, error) {
-	result, err := q.db.Exec(ctx, wSConnect, arg.ConnID, arg.At, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	row := q.db.QueryRow(ctx, wSConnect, arg.ConnID, arg.At, arg.ID)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
 }
 
 const wSDisconnect = `-- name: WSDisconnect :exec
-UPDATE devices SET ws_connected_at = NULL WHERE id = $1 AND ws_connected_at = $2
+UPDATE devices SET ws_connected_at = NULL, ws_seq = NULL WHERE id = $1 AND ws_seq = $2
 `
 
 type WSDisconnectParams struct {
-	ID uuid.UUID
-	At *time.Time
+	ID  uuid.UUID
+	Seq *int64
 }
 
-// WSDisconnect clears the mark only if no newer connection has replaced it.
+// WSDisconnect clears the mark only if connection @seq still owns it.
 func (q *Queries) WSDisconnect(ctx context.Context, arg WSDisconnectParams) error {
-	_, err := q.db.Exec(ctx, wSDisconnect, arg.ID, arg.At)
+	_, err := q.db.Exec(ctx, wSDisconnect, arg.ID, arg.Seq)
 	return err
 }
 
 const wSTouch = `-- name: WSTouch :execrows
-UPDATE devices SET ws_connected_at = $1 WHERE id = $2 AND revoked_at IS NULL
+UPDATE devices SET ws_connected_at = CASE WHEN ws_seq = $1 THEN $2::timestamptz ELSE ws_connected_at END
+WHERE id = $3 AND revoked_at IS NULL
 `
 
 type WSTouchParams struct {
-	At *time.Time
-	ID uuid.UUID
+	Seq *int64
+	At  time.Time
+	ID  uuid.UUID
 }
 
+// WSTouch refreshes the mark only for the connection that owns it (@seq); the
+// row count still says whether the device exists and is not revoked.
 func (q *Queries) WSTouch(ctx context.Context, arg WSTouchParams) (int64, error) {
-	result, err := q.db.Exec(ctx, wSTouch, arg.At, arg.ID)
+	result, err := q.db.Exec(ctx, wSTouch, arg.Seq, arg.At, arg.ID)
 	if err != nil {
 		return 0, err
 	}

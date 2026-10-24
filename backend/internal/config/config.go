@@ -85,6 +85,7 @@ type Config struct {
 	WSFCMFallback        time.Duration // FCM if a socket-woken message is still queued after this; 0 = never
 	WSListenRetryMax     time.Duration // max backoff reconnecting the LISTEN connection
 	WSListenPingInterval time.Duration // health check of the idle LISTEN connection
+	WSResyncMargin       time.Duration // after a LISTEN outage, wake sockets for messages queued this long before it began
 
 	Mailer       string // "smtp" or "log"
 	SMTPHost     string
@@ -171,6 +172,7 @@ func Default() Config {
 		WSFCMFallback:        10 * time.Second,
 		WSListenRetryMax:     30 * time.Second,
 		WSListenPingInterval: 30 * time.Second,
+		WSResyncMargin:       time.Minute,
 
 		Mailer:      "smtp",
 		SMTPPort:    587,
@@ -277,6 +279,7 @@ func (l *loader) config() (Config, error) {
 	c.WSFCMFallback = l.dur("WS_FCM_FALLBACK", c.WSFCMFallback)
 	c.WSListenRetryMax = l.dur("WS_LISTEN_RETRY_MAX", c.WSListenRetryMax)
 	c.WSListenPingInterval = l.dur("WS_LISTEN_PING_INTERVAL", c.WSListenPingInterval)
+	c.WSResyncMargin = l.dur("WS_RESYNC_MARGIN", c.WSResyncMargin)
 
 	defMailer := c.Mailer
 	if c.Env == "dev" {
@@ -382,6 +385,7 @@ func (c Config) Validate() error {
 	pos("WS_STALE_AFTER", c.WSStaleAfter)
 	pos("WS_LISTEN_RETRY_MAX", c.WSListenRetryMax)
 	pos("WS_LISTEN_PING_INTERVAL", c.WSListenPingInterval)
+	pos("WS_RESYNC_MARGIN", c.WSResyncMargin)
 	min1("WS_MAX_CONNS", int64(c.WSMaxConns))
 	if c.WSFCMFallback < 0 {
 		errs = append(errs, fmt.Errorf("WS_FCM_FALLBACK: must be >= 0, got %s", c.WSFCMFallback))

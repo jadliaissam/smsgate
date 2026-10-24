@@ -61,26 +61,31 @@ RETURNING id, name, sims, battery, charging,
 -- device's WebSocket; the notification is sent when the statement commits.
 -- name: RevokeDevice :execrows
 WITH r AS (
-    UPDATE devices SET revoked_at = @now, fcm_token = NULL, ws_connected_at = NULL
+    UPDATE devices SET revoked_at = @now, fcm_token = NULL, ws_connected_at = NULL, ws_seq = NULL
     WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL
     RETURNING id
 )
 SELECT pg_notify('smsgate_revoke', r.id::text) FROM r;
 
--- WSConnect marks the device connected and announces the new connection
--- (LISTEN smsgate_ws, payload "<device_id>:<conn_id>") so an older socket on
--- another instance is closed. No row means the device is revoked.
--- name: WSConnect :execrows
+-- WSConnect marks the device connected, takes the connection's sequence number
+-- and announces it (LISTEN smsgate_ws, payload "<device_id>:<conn_id>:<seq>") so
+-- an older socket on another instance is closed. No row means the device is
+-- revoked.
+-- name: WSConnect :one
 WITH d AS (
-    UPDATE devices SET ws_connected_at = @at
+    UPDATE devices SET ws_connected_at = @at::timestamptz, ws_seq = nextval('devices_ws_seq')
     WHERE id = @id AND revoked_at IS NULL
-    RETURNING id
+    RETURNING id, ws_seq
 )
-SELECT pg_notify('smsgate_ws', d.id::text || ':' || @conn_id::text) FROM d;
+SELECT d.ws_seq::bigint AS seq
+FROM d, LATERAL (SELECT pg_notify('smsgate_ws', d.id::text || ':' || @conn_id::text || ':' || d.ws_seq::text)) AS n;
 
+-- WSTouch refreshes the mark only for the connection that owns it (@seq); the
+-- row count still says whether the device exists and is not revoked.
 -- name: WSTouch :execrows
-UPDATE devices SET ws_connected_at = @at WHERE id = @id AND revoked_at IS NULL;
+UPDATE devices SET ws_connected_at = CASE WHEN ws_seq = @seq THEN @at::timestamptz ELSE ws_connected_at END
+WHERE id = @id AND revoked_at IS NULL;
 
--- WSDisconnect clears the mark only if no newer connection has replaced it.
+-- WSDisconnect clears the mark only if connection @seq still owns it.
 -- name: WSDisconnect :exec
-UPDATE devices SET ws_connected_at = NULL WHERE id = @id AND ws_connected_at = @at;
+UPDATE devices SET ws_connected_at = NULL, ws_seq = NULL WHERE id = @id AND ws_seq = @seq;
