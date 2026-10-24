@@ -6,11 +6,16 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Pairing credentials. The token is secret: [toString] redacts it. */
 data class Credentials(val serverUrl: String, val deviceId: String, val deviceToken: String) {
@@ -31,6 +36,10 @@ sealed interface PairingState {
  * back to pairing instead of crashing. The decrypted token is cached in memory
  * so API calls do not hit the Keystore each time.
  *
+ * Keystore work runs on [Dispatchers.IO]. [save] and the clear functions are
+ * serialized by a mutex; use [clearIfToken] / [clearIfDevice] on the 401 path so a
+ * late 401 from an old request cannot wipe credentials that were just re-paired.
+ *
  * Use one instance per process (AppGraph): DataStore forbids two stores on one file.
  */
 class CredentialStore(
@@ -40,9 +49,12 @@ class CredentialStore(
     @Volatile
     private var cache: Pair<String, String>? = null // encrypted blob → token
 
+    private val writeLock = Mutex()
+
     /** Paired/unpaired, emitted on change. */
     val state: Flow<PairingState> = prefs()
         .map { p -> read(p)?.let { PairingState.Paired(it.serverUrl, it.deviceId) } ?: PairingState.Unpaired }
+        .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
 
     /**
@@ -51,17 +63,19 @@ class CredentialStore(
      * [IOException] if the store cannot be written; nothing is stored then.
      */
     suspend fun save(serverUrl: String, deviceId: String, deviceToken: String) {
-        val blob = cipher.encrypt(deviceToken)
-        dataStore.edit {
-            it[SERVER_URL] = serverUrl
-            it[DEVICE_ID] = deviceId
-            it[TOKEN] = blob
+        writeLock.withLock {
+            val blob = withContext(Dispatchers.IO) { cipher.encrypt(deviceToken) }
+            dataStore.edit {
+                it[SERVER_URL] = serverUrl
+                it[DEVICE_ID] = deviceId
+                it[TOKEN] = blob
+            }
+            cache = blob to deviceToken
         }
-        cache = blob to deviceToken
     }
 
     /** All three values, or null when unpaired or the token is undecryptable. */
-    suspend fun load(): Credentials? = read(prefs().first())
+    suspend fun load(): Credentials? = withContext(Dispatchers.IO) { read(prefs().first()) }
 
     suspend fun serverUrl(): String? = load()?.serverUrl
     suspend fun deviceId(): String? = load()?.deviceId
@@ -69,11 +83,33 @@ class CredentialStore(
 
     /** Wipes every stored value and destroys the Keystore key (unpair / revoked). */
     suspend fun clear() {
+        writeLock.withLock { clearLocked() }
+    }
+
+    /**
+     * [clear], but only if the stored token is still [token]. For the 401 path: a
+     * response to a request made with an old token must not wipe credentials saved
+     * since. Returns whether it cleared.
+     */
+    suspend fun clearIfToken(token: String): Boolean = writeLock.withLock {
+        if (load()?.deviceToken != token) return@withLock false
+        clearLocked()
+        true
+    }
+
+    /** [clear], but only if the stored device id is still [deviceId]. Returns whether it cleared. */
+    suspend fun clearIfDevice(deviceId: String): Boolean = writeLock.withLock {
+        if (load()?.deviceId != deviceId) return@withLock false
+        clearLocked()
+        true
+    }
+
+    private suspend fun clearLocked() {
         cache = null
         try {
             dataStore.edit { it.clear() }
         } finally {
-            cipher.reset()
+            withContext(Dispatchers.IO) { cipher.reset() }
         }
     }
 

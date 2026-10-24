@@ -7,9 +7,13 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -127,5 +131,47 @@ class CredentialStoreTest {
         val thrown = runCatching { s.save("https://a", "d", "dt_1") }.exceptionOrNull()
         assertTrue(thrown is java.security.GeneralSecurityException)
         assertTrue(dataStore.data.first().asMap().isEmpty())
+    }
+
+    @Test
+    fun clearIfTokenOnlyClearsMatchingToken() = runBlocking {
+        store.save("https://a", "d1", "dt_old")
+        store.save("https://a", "d2", "dt_new") // re-paired while an old request was in flight
+        assertFalse(store.clearIfToken("dt_old"))
+        assertEquals(Credentials("https://a", "d2", "dt_new"), store.load())
+        assertTrue(store.clearIfToken("dt_new"))
+        assertNull(store.load())
+    }
+
+    @Test
+    fun clearIfDeviceOnlyClearsMatchingDevice() = runBlocking {
+        store.save("https://a", "d2", "dt_new")
+        assertFalse(store.clearIfDevice("d1"))
+        assertEquals("d2", store.deviceId())
+        assertTrue(store.clearIfDevice("d2"))
+        assertNull(store.load())
+    }
+
+    @Test
+    fun concurrentSaveAndClearLeaveConsistentState() = runBlocking {
+        repeat(50) { i ->
+            val jobs = listOf(
+                async(Dispatchers.IO) { store.save("https://a", "d$i", "dt_$i") },
+                async(Dispatchers.IO) { store.clear() },
+            )
+            jobs.awaitAll()
+            // Either order is valid, but the store and cache must agree: no half-written state.
+            val c = store.load()
+            val raw = dataStore.data.first().asMap()
+            if (c == null) assertTrue(raw.isEmpty()) else assertEquals("dt_$i", c.deviceToken)
+        }
+    }
+
+    @Test
+    fun cancelledSaveStoresNothing() = runBlocking {
+        val job = launch(start = CoroutineStart.LAZY) { store.save("https://a", "d", "dt_1") }
+        job.cancel()
+        job.join()
+        assertNull(store.load())
     }
 }

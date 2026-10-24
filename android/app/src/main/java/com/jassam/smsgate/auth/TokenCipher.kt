@@ -60,6 +60,8 @@ open class AesGcmTokenCipher(private val key: (create: Boolean) -> SecretKey?) :
         }
     } catch (e: GeneralSecurityException) {
         null // AEADBadTag, invalidated/unrecoverable key, …
+    } catch (e: java.io.IOException) {
+        null // KeyStore.load failure
     } catch (e: IllegalArgumentException) {
         null // bad base64 / bad UTF-8
     } catch (e: RuntimeException) {

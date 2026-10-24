@@ -79,6 +79,10 @@ class DeviceApi(
     /**
      * Claims a message. Only a 200 ([ApiResult.Ok]) allows sending. 409
      * `already_claimed` or 410 `expired` → do nothing; 404 `message_not_found`.
+     *
+     * A cancelled call, a network error after the request was sent, or a 200 with an
+     * unparseable body may still mean the server took the message. The caller must
+     * not retry the claim or send; the sweeper will expire the message.
      */
     suspend fun claim(id: String): ApiResult<ClaimedMessage> =
         call("POST", messagePath(id, "claim"), null, ClaimedMessage.serializer())
@@ -205,7 +209,11 @@ class DeviceApi(
     }
 }
 
-/** The app's single OkHttpClient for the device API (and, in A7, the WebSocket). */
+/**
+ * The app's single OkHttpClient for the device API (and, in A7, the WebSocket).
+ * The WebSocket must use `client.newBuilder().readTimeout(0).pingInterval(..)`: the
+ * 30 s read timeout here would kill an idle socket.
+ */
 object DeviceHttp {
     fun client(userAgent: String): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)

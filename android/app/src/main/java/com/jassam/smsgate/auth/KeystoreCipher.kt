@@ -30,6 +30,9 @@ class KeystoreTokenCipher(private val alias: String = DEFAULT_ALIAS) : TokenCiph
     } catch (e: RuntimeException) {
         reset()
         delegate.encrypt(plaintext)
+    } catch (e: java.io.IOException) {
+        reset()
+        delegate.encrypt(plaintext)
     }
 
     override fun decrypt(blob: String): String? = delegate.decrypt(blob)
