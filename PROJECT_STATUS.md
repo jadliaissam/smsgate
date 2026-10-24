@@ -49,7 +49,12 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** start the Android plan at Task A0 (item 2 of [What is left](#what-is-left)), with an implementer and a reviewer per task.
+**Suggested next step:** continue the Android plan on branch `feat/android-app`. Read `.superpowers/sdd/2026-10-24-android-app/progress.md` first (if present). State on 2026-10-24:
+- **Done and approved:** A0 (device `me`/`unregister`), A2 (Android scaffold, theme from web tokens, CI), with fix rounds.
+- **Committed, review was in flight when the session stopped:** A1 (backend device WebSocket, wake routing via LISTEN/NOTIFY) and A3 (Android API client and encrypted credentials). Re-run their reviews before continuing.
+- **Next:** A4 (onboarding, permissions, pairing), then A5–A10 in plan order.
+- **Rules:** no Co-Authored-By or any Claude/AI mention in commits or PRs (history of `main` and `feat/android-app` was rewritten on 2026-10-24; local backup branches `backup/*-before-rewrite` hold the old history). Stop work when the user's usage reaches 95%.
+- **Production:** CapRover `smsgate-web` now has WebSocket support and 7-minute proxy timeouts; the socket endpoint goes live when `feat/android-app` is merged. Consider `GOMEMLIMIT` around 160 MiB if connections approach 10k.
 
 ## Requirements and source documents
 
@@ -313,7 +318,7 @@ The work followed a plan → implement → review loop:
 In rough priority order:
 
 1. **Confirm email end to end:** sign up with a new address and check the verification email arrives.
-2. **Android app:** planned in `docs/superpowers/plans/2026-10-24-android-app.md` (branch `feat/android-app`), decisions confirmed by the user on 2026-10-24: minSdk 23, look and feel generated from the web tokens, JDK 17 + Android SDK installed locally, signed APKs on GitHub Releases, WebSocket "always connected" mode included (backend task A1), online window 20 minutes (`DEVICE_ONLINE_WINDOW=20m` already set in production). Next: Task A0.
+2. **Android app:** planned in `docs/superpowers/plans/2026-10-24-android-app.md` (branch `feat/android-app`), decisions confirmed by the user on 2026-10-24: minSdk 24, look and feel generated from the web tokens, JDK 17 + Android SDK installed locally, signed APKs on GitHub Releases, WebSocket "always connected" mode included (backend task A1), online window 20 minutes (`DEVICE_ONLINE_WINDOW=20m` already set in production). Next: Task A0.
 3. **Quota enforcement** (build step 6): plans are seeded but messages per month and device limits are not enforced. Needed before opening to the public.
 4. **Later features from the design:** webhooks, WebSocket transport, Stripe billing, message-body retention purge, APK download and in-app update, a public endpoint exposing limits for the docs page.
 5. **Deferred minor issues:** listed in `.superpowers/sdd/2026-10-23-web-dashboard/progress.md` (the final review triaged them as "later").
