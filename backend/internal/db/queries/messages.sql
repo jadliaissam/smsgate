@@ -166,3 +166,10 @@ WITH c AS (
     INSERT INTO message_events (message_id, status, detail) SELECT id, 'failed', 'device_lost' FROM u
 )
 SELECT * FROM u;
+
+-- CountMessagesByStatus counts a user's messages created at or after @since,
+-- per status (usage stats); served by messages_user_created_id_idx.
+-- name: CountMessagesByStatus :many
+SELECT status, count(*)::bigint AS n FROM messages
+WHERE user_id = @user_id AND created_at >= @since
+GROUP BY status;

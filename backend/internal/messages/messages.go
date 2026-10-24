@@ -120,6 +120,9 @@ type Service struct {
 	// transition (never for no-op retries). Set it before serving requests.
 	OnStatus func(ctx context.Context, m Message)
 
+	// Now is the service clock for usage-stat windows (default time.Now).
+	Now func() time.Time
+
 	sem chan struct{} // bounds concurrent wake goroutines (cfg.WakeConcurrency)
 	wg  sync.WaitGroup
 }
@@ -127,7 +130,7 @@ type Service struct {
 // NewService builds a Service. The wake semaphore size is cfg.WakeConcurrency.
 func NewService(q *dbq.Queries, waker push.Waker, cfg config.Config, log *slog.Logger) *Service {
 	n := max(cfg.WakeConcurrency, 1)
-	return &Service{q: q, waker: waker, cfg: cfg, log: log, sem: make(chan struct{}, n)}
+	return &Service{q: q, waker: waker, cfg: cfg, log: log, Now: time.Now, sem: make(chan struct{}, n)}
 }
 
 // Wait blocks until every in-flight wake goroutine has finished. Call it on

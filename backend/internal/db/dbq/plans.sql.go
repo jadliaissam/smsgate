@@ -7,6 +7,8 @@ package dbq
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const getPlan = `-- name: GetPlan :one
@@ -15,6 +17,24 @@ SELECT id, name, monthly_message_quota, max_devices, price_cents, stripe_price_i
 
 func (q *Queries) GetPlan(ctx context.Context, id string) (Plan, error) {
 	row := q.db.QueryRow(ctx, getPlan, id)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.MonthlyMessageQuota,
+		&i.MaxDevices,
+		&i.PriceCents,
+		&i.StripePriceID,
+	)
+	return i, err
+}
+
+const getUserPlan = `-- name: GetUserPlan :one
+SELECT p.id, p.name, p.monthly_message_quota, p.max_devices, p.price_cents, p.stripe_price_id FROM plans p JOIN users u ON u.plan_id = p.id WHERE u.id = $1
+`
+
+func (q *Queries) GetUserPlan(ctx context.Context, id uuid.UUID) (Plan, error) {
+	row := q.db.QueryRow(ctx, getUserPlan, id)
 	var i Plan
 	err := row.Scan(
 		&i.ID,

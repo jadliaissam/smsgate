@@ -82,6 +82,7 @@ func New(d Deps) http.Handler {
 	if d.Messages == nil {
 		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
 	}
+	d.Messages.Now = d.Now
 	messages.Routes(mux, d.Messages, accounts.RequireAPIKey(q, d.Cfg.APIKeyTouchInterval, d.Now), sendRL)
 	messages.AppRoutes(mux, d.Messages, accounts.RequireSession(q, d.Cfg.SessionCookie, d.Now), appSendRL)
 	devAuth := devices.RequireDevice(q)
