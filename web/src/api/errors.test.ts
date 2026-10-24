@@ -20,6 +20,15 @@ const known = [
   'busy',
   'unsupported_media_type',
   'network_error',
+  'invalid_json',
+  'body_too_large',
+  'invalid_idempotency_key',
+  'invalid_client_ref',
+  'invalid_before',
+  'invalid_limit',
+  'invalid_status',
+  'invalid_since',
+  'route_not_found',
 ]
 
 describe('errorCopy', () => {
@@ -37,6 +46,15 @@ describe('errorCopy', () => {
   it('treats gateway failures as a temporary outage', () => {
     expect(errorCopy('http_502')).toMatch(/unavailable/i)
     expect(errorCopy('http_503')).toMatch(/unavailable/i)
+  })
+
+  it('treats a cancelled request as a temporary outage', () => {
+    expect(errorCopy('cancelled')).toBe(errorCopy('http_503'))
+  })
+
+  it('does not hardcode env-tunable limits', () => {
+    expect(errorCopy('weak_password')).not.toMatch(/\d/)
+    expect(errorCopy('body_too_long')).not.toMatch(/\d/)
   })
 
   it('gives distinct, human copy for the main auth codes', () => {

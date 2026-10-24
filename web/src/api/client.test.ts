@@ -36,6 +36,16 @@ describe('api client', () => {
     expect(m.calls[0]!.headers['content-type']).toBe('application/json')
   })
 
+  it('normalises header names so caller headers cannot duplicate or override Content-Type', async () => {
+    const m = mockFetch([{ method: 'POST', path: '/app/x', status: 204 }])
+    const spy = m.fn
+    await api('/app/x', { method: 'POST', headers: { 'content-type': 'text/plain', ACCEPT: 'text/csv', 'X-Trace': 't' } })
+    const sent = spy.mock.calls[0]![1]!.headers as Record<string, string>
+    expect(Object.keys(sent).sort()).toEqual(['accept', 'content-type', 'x-trace'])
+    expect(sent['content-type']).toBe('application/json')
+    expect(sent['accept']).toBe('text/csv')
+  })
+
   it('returns undefined for 204', async () => {
     mockFetch([{ method: 'POST', path: '/app/logout', status: 204 }])
     await expect(api('/app/logout', { method: 'POST' })).resolves.toBeUndefined()

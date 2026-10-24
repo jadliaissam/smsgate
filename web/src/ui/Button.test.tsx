@@ -21,7 +21,9 @@ describe('Button', () => {
     const btn = screen.getByRole('button', { name: /save/i })
     expect(btn).toBeDisabled()
     expect(btn).toHaveAttribute('aria-busy', 'true')
-    expect(within(btn).getByRole('status', { name: /loading/i })).toBeInTheDocument()
+    // The spinner is decorative here; aria-busy carries the state.
+    expect(within(btn).queryByRole('status')).not.toBeInTheDocument()
+    expect(btn.querySelector('[data-slot="spinner"]')).toHaveAttribute('aria-hidden', 'true')
     await userEvent.click(btn)
     expect(onClick).not.toHaveBeenCalled()
   })

@@ -1,6 +1,6 @@
 export type ThemePreference = 'system' | 'light' | 'dark'
 
-/** Must match the inline pre-paint script in index.html. */
+/** Must match the pre-paint script public/theme.js. */
 export const THEME_STORAGE_KEY = 'smsgate-theme'
 
 export function readThemePreference(): ThemePreference {
