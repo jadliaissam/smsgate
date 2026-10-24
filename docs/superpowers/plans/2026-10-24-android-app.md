@@ -17,7 +17,7 @@
 | # | Decision | Recommendation |
 |---|---|---|
 | D1 | Application id | `com.jassam.smsgate`, fixed by the existing `google-services.json` (Firebase project `smsgate-e5a24`). That file is private and never committed; see Task A2. |
-| D2 | Minimum Android version | `minSdk 23` (Android 6.0, over 99 % of active devices; the user asked for broad coverage). 23 is also the floor of the current Firebase BoM, of runtime permissions and of Keystore AES-GCM, so nothing older is worth the extra code paths. `targetSdk`/`compileSdk` = latest stable. Every API newer than 23 is behind a version check with a tested fallback (`SmsManager.createForSubscriptionId` on 31+, `getSmsManagerForSubscriptionId` below; `POST_NOTIFICATIONS` only on 33+; exact `PendingIntent` flags per level). |
+| D2 | Minimum Android version | **`minSdk 24` (Android 7.0+), user decision 2026-10-24.** It still covers nearly every phone in use, and it is the floor of the current Firebase BoM, WorkManager and DataStore releases, so those stay on maintained versions. `targetSdk`/`compileSdk` 37. Every API newer than 24 is behind a version check with a tested fallback (`SmsManager.createForSubscriptionId` on 31+, `getSmsManagerForSubscriptionId` below; `POST_NOTIFICATIONS` only on 33+; exact `PendingIntent` flags per level). |
 | D3 | Build toolchain | Install JDK 17 and the Android command-line tools with Homebrew on this Mac, so agents can build and run unit tests locally. CI builds too. |
 | D4 | Distribution and signing | A release keystore generated once, kept outside the repo (backup by the user), its values stored as GitHub secrets. CI builds a signed APK and publishes it as a GitHub Release asset `smsgate.apk` on tags `android-v*`. The web app's nginx redirects `/downloads/smsgate.apk` to `https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk`. |
 | D5 | WebSocket "always connected" mode | **Included (user decision).** Backend gets `GET /device/v1/ws` (Task A1) with cross-instance wake routing through Postgres `LISTEN/NOTIFY`, as the spec's scaling section describes. The app holds the socket in a foreground service while charging or when "Always connected" is on (Task A7); otherwise FCM + periodic sync. This also gives phones without Play services real-time delivery (D11). |
@@ -118,7 +118,7 @@ android/
 - CI: on changes under `android/**`, JDK 17 + Android SDK, `./gradlew lint testDebugUnitTest assembleDebug`. On tag `android-v*`: decode the keystore from secrets, `assembleRelease`, publish `smsgate.apk` to a GitHub Release.
 - R8 minify + resource shrinking for release.
 
-- [ ] **Step 1:** scaffold; token generator with a test comparing a few known conversions (e.g. `brand-600` → `#5B4BE0` ±1); `./gradlew assembleDebug` passes locally.
+- [ ] **Step 1:** scaffold; token generator with a test comparing a few known conversions (e.g. `brand-600` → `#5B56ED` ±1); `./gradlew assembleDebug` passes locally.
 - [ ] **Step 2:** CI workflow; actionlint clean.
 - [ ] **Step 3:** Commit `feat(android): project scaffold, theme and CI`.
 
@@ -233,7 +233,7 @@ android/
 - [ ] Revoke from the dashboard → app returns to pairing within one sync.
 - [ ] Overnight on battery: battery stats show no meaningful drain.
 - [ ] Performance: Macrobenchmark cold start under 500 ms on a mid-range phone; `dumpsys meminfo` idle PSS under 60 MB; release APK under 8 MB.
-- [ ] Device matrix (emulators for versions, real phones for OEM behaviour): Android 6, 8, 10, 12, 13, 14 and latest emulators for install, pairing, permissions and sending through the fake SMS path; real Samsung and Xiaomi phones if available for background wake; one dual-SIM phone; one phone without Play services if available (D11).
+- [ ] Device matrix (emulators for versions, real phones for OEM behaviour): Android 7, 8, 10, 12, 13, 14 and latest emulators for install, pairing, permissions and sending through the fake SMS path; real Samsung and Xiaomi phones if available for background wake; one dual-SIM phone; one phone without Play services if available (D11).
 - [ ] Visual check: screenshots of every screen in light and dark next to the matching dashboard pages; colours and type match.
 
 ---
