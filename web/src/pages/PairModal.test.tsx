@@ -130,4 +130,64 @@ describe('PairModal', () => {
     await user.click(within(dialog).getByRole('button', { name: /resend email/i }))
     await waitFor(() => expect(m.callsTo('POST', '/app/resend-verification')).toHaveLength(1))
   })
+
+  it('refetches devices on open and takes the baseline from that fresh list', async () => {
+    const m = mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [existing] } },
+      { method: 'POST', path: '/app/pairing-codes', status: 201, json: pairingCode(300_000) },
+    ])
+    renderApp('/devices')
+    await screen.findByRole('article', { name: 'Pixel 8' })
+    // Paired elsewhere (another tab) after the page loaded: not "our" phone.
+    m.use({ path: '/app/devices', json: { data: [existing, paired] } })
+    const before = m.callsTo('GET', '/app/devices').length
+
+    const { dialog } = await openPairModal()
+    await within(dialog).findByText('ABCD-2345')
+    await waitFor(() => expect(m.callsTo('GET', '/app/devices').length).toBeGreaterThan(before))
+    await act(async () => vi.advanceTimersByTimeAsync(4_000))
+    expect(within(dialog).queryByRole('heading', { name: /is paired/i })).not.toBeInTheDocument()
+  })
+
+  it('counts down from the TTL (server Date header), not the client clock', async () => {
+    // The server clock runs 10 minutes ahead of the browser.
+    const serverNow = Math.floor((Date.now() + 600_000) / 1000) * 1000
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [existing] } },
+      {
+        method: 'POST',
+        path: '/app/pairing-codes',
+        status: 201,
+        headers: { date: new Date(serverNow).toUTCString() },
+        json: { ...pairingCode(0), expires_at: new Date(serverNow + 300_000).toISOString() },
+      },
+    ])
+    renderApp('/devices')
+    const { dialog } = await openPairModal()
+    await within(dialog).findByText('ABCD-2345')
+    expect(within(dialog).getByRole('timer')).toHaveTextContent(/^Code expires in (5:00|4:59)$/)
+  })
+
+  it('stops the countdown interval as soon as the code expires', async () => {
+    const setI = vi.spyOn(window, 'setInterval')
+    const clearI = vi.spyOn(window, 'clearInterval')
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [existing] } },
+      { method: 'POST', path: '/app/pairing-codes', status: 201, json: pairingCode(1_000) },
+    ])
+    renderApp('/devices')
+    const { dialog } = await openPairModal()
+    await within(dialog).findByText('ABCD-2345')
+    // Just past expiry, well before a further 1 s tick.
+    await act(async () => vi.advanceTimersByTimeAsync(1_300))
+    await within(dialog).findByRole('button', { name: /generate new code/i })
+
+    const cleared = new Set(clearI.mock.calls.map((c) => c[0]))
+    const live = setI.mock.calls.flatMap((c, i) => (c[1] === 1000 ? [setI.mock.results[i]!.value] : []))
+    expect(live.filter((id) => !cleared.has(id))).toEqual([])
+    expect(clearI.mock.calls.filter((c) => c[0] === undefined)).toEqual([])
+  })
 })

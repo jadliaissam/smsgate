@@ -31,7 +31,18 @@ function isJSONResponse(res: Response): boolean {
   return /^application\/(?:[\w.+-]+\+)?json\b/i.test(res.headers.get('content-type') ?? '')
 }
 
+export interface ApiResponse<T> {
+  data: T
+  /** The response's Date header (server clock, 1 s resolution), if any. */
+  serverDate: number | null
+}
+
 export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
+  return (await apiResponse<T>(path, init)).data
+}
+
+/** Like api(), plus response metadata (used to correct for clock skew). */
+export async function apiResponse<T>(path: string, init: ApiInit = {}): Promise<ApiResponse<T>> {
   const method = (init.method ?? 'GET').toUpperCase()
   const safe = method === 'GET' || method === 'HEAD'
   // Header names are case-insensitive: normalise to lower case so caller
@@ -57,7 +68,11 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
     throw new ApiError(0, 'network_error', 'network request failed')
   }
 
-  if (res.status === 204 || res.status === 205) return undefined as T
+  const date = Date.parse(res.headers.get('date') ?? '')
+  const serverDate = Number.isFinite(date) ? date : null
+  const done = (data: T): ApiResponse<T> => ({ data, serverDate })
+
+  if (res.status === 204 || res.status === 205) return done(undefined as T)
 
   if (!res.ok) {
     if (isJSONResponse(res)) {
@@ -72,9 +87,9 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   }
 
   const text = await res.text()
-  if (!text) return undefined as T
+  if (!text) return done(undefined as T)
   try {
-    return JSON.parse(text) as T
+    return done(JSON.parse(text) as T)
   } catch {
     throw new ApiError(res.status, 'invalid_response', 'response was not valid JSON')
   }

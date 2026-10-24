@@ -18,7 +18,7 @@ import { AlertIcon } from '../ui/icons'
 import { Input } from '../ui/Input'
 import { Modal } from '../ui/Modal'
 import { Skeleton } from '../ui/Skeleton'
-import { absoluteTime, relativeTime, useNow } from '../ui/time'
+import { absoluteTime, sinceTime, useNow } from '../ui/time'
 
 // Name | key | created | last used | action, on md and up; stacked cards below.
 const columns = 'md:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_6.5rem]'
@@ -255,7 +255,7 @@ function KeyRow({ apiKey: k, now, onRevoke }: KeyRowProps) {
           {k.revoked_at && (
             <Badge tone="neutral" className="mt-1">
               <time dateTime={k.revoked_at} title={absoluteTime(k.revoked_at)}>
-                Revoked {relativeTime(k.revoked_at, now)}
+                Revoked {sinceTime(k.revoked_at, now)}
               </time>
             </Badge>
           )}
@@ -303,7 +303,7 @@ function TimeCell({ label, iso, now, muted }: { label: string; iso: string | nul
       <dd className={cx('truncate', muted || !iso ? 'text-fg-muted' : 'text-fg')}>
         {iso ? (
           <time dateTime={iso} title={absoluteTime(iso)}>
-            {relativeTime(iso, now)}
+            {sinceTime(iso, now)}
           </time>
         ) : (
           'Never'

@@ -64,9 +64,14 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
   const generate = () =>
     create.mutate(undefined, {
       onSuccess: (pc) => {
-        const t = Date.now()
-        setNow(t)
-        setIssued({ code: pc.code, qrPayload: pc.qr_payload, expiresAt: new Date(pc.expires_at).getTime(), issuedAt: t })
+        // Client-clock deadline from the server-measured TTL (skew-free).
+        setNow(pc.receivedAt)
+        setIssued({
+          code: pc.code,
+          qrPayload: pc.qr_payload,
+          expiresAt: pc.receivedAt + pc.ttlMs,
+          issuedAt: pc.receivedAt,
+        })
       },
     })
 
@@ -80,10 +85,17 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
   }, [])
 
   const unverified = isApiError(create.error, 'email_not_verified')
-  const devices = useDevices({ refetchInterval: active && !paired && !unverified ? PAIR_POLL_MS : false })
+  const devices = useDevices({
+    refetchInterval: active && !paired && !unverified ? PAIR_POLL_MS : false,
+    // The cached list may be stale: fetch afresh on open for the baseline.
+    refetchOnMount: 'always',
+  })
 
-  // Ids present when the modal opened; anything new afterwards is our phone.
-  if (baseline === null && devices.data) setBaseline(new Set(devices.data.map((d) => d.id)))
+  // Ids present when the modal opened (the first successful fetch after it
+  // mounted, never the cached list); anything new afterwards is our phone.
+  if (baseline === null && devices.isFetchedAfterMount && devices.status === 'success') {
+    setBaseline(new Set(devices.data.map((d) => d.id)))
+  }
   const fresh = baseline && !paired ? devices.data?.find((d) => !baseline.has(d.id)) : undefined
   if (fresh) setPaired(fresh)
 
@@ -108,8 +120,10 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
     const first = (expiresAt - Date.now()) % 1000
     const timeout = window.setTimeout(
       () => {
-        tick()
+        // Assign first: the first tick may already be past expiry and must
+        // be able to clear the interval.
         interval = window.setInterval(tick, 1000)
+        tick()
       },
       first > 0 ? first : 1000,
     )

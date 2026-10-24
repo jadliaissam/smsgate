@@ -8,10 +8,10 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { api, ApiError, isApiError } from './client'
+import { api, ApiError, apiResponse, isApiError } from './client'
 import { errorCopy } from './errors'
 import { clearResendCooldown } from './resendCooldown'
-import type { ApiKey, CreatedApiKey, Device, Me, Page, PairingCode } from './types'
+import type { ApiKey, CreatedApiKey, Device, IssuedPairingCode, Me, Page, PairingCode } from './types'
 import { useToast } from '../ui/Toast'
 
 export const meKey = ['me'] as const
@@ -148,21 +148,33 @@ export const apiKeysKey = ['api-keys'] as const
 interface DevicesOptions {
   /** Poll interval in ms (the pair modal polls while open), or false. */
   refetchInterval?: number | false
+  /** Fetch on mount even if the cached list is fresh (pair modal baseline). */
+  refetchOnMount?: boolean | 'always'
 }
 
-export function useDevices({ refetchInterval = false }: DevicesOptions = {}) {
+export function useDevices({ refetchInterval = false, refetchOnMount = true }: DevicesOptions = {}) {
   return useQuery({
     queryKey: devicesKey,
     queryFn: ({ signal }) => api<Page<Device>>('/app/devices', { signal }).then((p) => p.data),
     refetchInterval,
+    refetchOnMount,
   })
 }
 
 // ---- devices ---------------------------------------------------------------
 
+/**
+ * POST /app/pairing-codes. The lifetime is measured against the server's
+ * clock (Date header) so a skewed browser clock does not shorten or stretch
+ * the countdown; without the header the browser clock is used.
+ */
 export function useCreatePairingCode() {
   return useMutation({
-    mutationFn: () => api<PairingCode>('/app/pairing-codes', { method: 'POST' }),
+    mutationFn: async (): Promise<IssuedPairingCode> => {
+      const { data, serverDate } = await apiResponse<PairingCode>('/app/pairing-codes', { method: 'POST' })
+      const receivedAt = Date.now()
+      return { ...data, receivedAt, ttlMs: new Date(data.expires_at).getTime() - (serverDate ?? receivedAt) }
+    },
   })
 }
 
@@ -197,6 +209,7 @@ export function useRenameDevice() {
       if (ctx?.previous) qc.setQueryData(devicesKey, ctx.previous)
       toast.error('Couldn’t rename the device', errorCopy(codeOf(err)))
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: devicesKey }),
   })
 }
 
