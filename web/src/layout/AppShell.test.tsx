@@ -16,10 +16,10 @@ describe('AppShell', () => {
     renderApp('/devices')
     const nav = await screen.findByRole('navigation', { name: /main/i })
     const links = within(nav).getAllByRole('link')
-    expect(links.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys'])
+    expect(links.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys', 'Docs'])
     expect(within(nav).getByRole('link', { name: 'Devices' })).toHaveAttribute('aria-current', 'page')
     const tabs = within(screen.getByRole('navigation', { name: /tab bar/i })).getAllByRole('link')
-    expect(tabs.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys'])
+    expect(tabs.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys', 'Docs'])
   })
 
   it('logout calls POST /app/logout and navigates to /login', async () => {

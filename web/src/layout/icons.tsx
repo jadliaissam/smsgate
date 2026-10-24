@@ -104,3 +104,22 @@ export const FilterIcon = (p: IconProps) => (
     <path d="M4 6h16M7 12h10M10 18h4" />
   </Svg>
 )
+export const BookIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 6.5C10.3 5 8 4.5 4.5 4.5v13c3.5 0 5.8.5 7.5 2 1.7-1.5 4-2 7.5-2v-13C16 4.5 13.7 5 12 6.5Z" />
+    <path d="M12 6.5v13" />
+  </Svg>
+)
+export const DownloadIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" />
+  </Svg>
+)
+export const WebhookIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6.5" cy="17" r="2.5" />
+    <circle cx="17.5" cy="17" r="2.5" />
+    <circle cx="12" cy="7" r="2.5" />
+    <path d="M10.8 9.2 7.7 14.8M9 17h6M13.2 9.2l3.1 5.6" />
+  </Svg>
+)

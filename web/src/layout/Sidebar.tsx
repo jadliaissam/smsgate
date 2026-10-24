@@ -2,11 +2,11 @@ import type { ComponentType, SVGProps } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { Badge } from '../ui/Badge'
 import { cx, focusRing } from '../ui/cx'
-import { HomeIcon, KeyIcon, MessageIcon, PhoneIcon } from './icons'
+import { BookIcon, HomeIcon, KeyIcon, MessageIcon, PhoneIcon } from './icons'
 import { Wordmark } from './Logo'
 
 interface NavItem {
-  to: '/' | '/devices' | '/messages' | '/api-keys'
+  to: '/' | '/devices' | '/messages' | '/api-keys' | '/docs'
   label: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
 }
@@ -16,6 +16,7 @@ const items: NavItem[] = [
   { to: '/devices', label: 'Devices', icon: PhoneIcon },
   { to: '/messages', label: 'Messages', icon: MessageIcon },
   { to: '/api-keys', label: 'API keys', icon: KeyIcon },
+  { to: '/docs', label: 'Docs', icon: BookIcon },
 ]
 
 function useActiveIndex(): number {
@@ -99,7 +100,7 @@ export function MobileTabBar() {
             className={cx('block size-full', slide, active < 0 && 'opacity-0')}
             style={{ transform: `translateX(${Math.max(active, 0) * 100}%)` }}
           >
-            <span className="mx-auto block h-full w-16 rounded-2xl bg-brand-50 dark:bg-brand-500/12" />
+            <span className="mx-auto block h-full w-full max-w-16 rounded-2xl bg-brand-50 dark:bg-brand-500/12" />
           </span>
         </span>
         <ul className="relative grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
