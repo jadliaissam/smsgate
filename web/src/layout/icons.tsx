@@ -93,3 +93,14 @@ export const SimIcon = (p: IconProps) => (
     <rect x="8.5" y="11" width="7" height="6" rx="1" />
   </Svg>
 )
+export const MessageIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5.5 4.5h13a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H11l-4.5 3.5v-3.5h-1a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z" />
+    <path d="M8 9.5h8M8 12.5h5" />
+  </Svg>
+)
+export const FilterIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 6h16M7 12h10M10 18h4" />
+  </Svg>
+)

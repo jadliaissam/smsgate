@@ -2,19 +2,19 @@ import type { ComponentType, SVGProps } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { Badge } from '../ui/Badge'
 import { cx, focusRing } from '../ui/cx'
-import { HomeIcon, KeyIcon, PhoneIcon } from './icons'
+import { HomeIcon, KeyIcon, MessageIcon, PhoneIcon } from './icons'
 import { Wordmark } from './Logo'
 
 interface NavItem {
-  to: '/' | '/devices' | '/api-keys'
+  to: '/' | '/devices' | '/messages' | '/api-keys'
   label: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
 }
 
-// MVP navigation (WR7): Messages and Docs arrive in later steps.
 const items: NavItem[] = [
   { to: '/', label: 'Overview', icon: HomeIcon },
   { to: '/devices', label: 'Devices', icon: PhoneIcon },
+  { to: '/messages', label: 'Messages', icon: MessageIcon },
   { to: '/api-keys', label: 'API keys', icon: KeyIcon },
 ]
 
@@ -89,7 +89,12 @@ export function MobileTabBar() {
       className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
     >
       <div className="relative px-2 py-1.5">
-        <span aria-hidden="true" className="pointer-events-none absolute inset-y-1.5 left-2 w-[calc((100%-1rem)/3)]">
+        {/* One column per item: the pill is one column wide and slides by whole columns. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-1.5 left-2"
+          style={{ width: `calc((100% - 1rem) / ${items.length})` }}
+        >
           <span
             className={cx('block size-full', slide, active < 0 && 'opacity-0')}
             style={{ transform: `translateX(${Math.max(active, 0) * 100}%)` }}
@@ -97,7 +102,7 @@ export function MobileTabBar() {
             <span className="mx-auto block h-full w-16 rounded-2xl bg-brand-50 dark:bg-brand-500/12" />
           </span>
         </span>
-        <ul className="relative grid grid-cols-3">
+        <ul className="relative grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
           {items.map((item) => (
             <li key={item.to} className="relative">
               <Link

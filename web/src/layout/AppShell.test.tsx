@@ -11,14 +11,15 @@ const emptyLists = [
 ]
 
 describe('AppShell', () => {
-  it('shows MVP navigation only, with the current page marked', async () => {
+  it('shows the navigation with the current page marked', async () => {
     mockFetch([{ path: '/app/me', json: verifiedMe }])
     renderApp('/devices')
     const nav = await screen.findByRole('navigation', { name: /main/i })
     const links = within(nav).getAllByRole('link')
-    expect(links.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'API keys'])
+    expect(links.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys'])
     expect(within(nav).getByRole('link', { name: 'Devices' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByRole('link', { name: /messages|docs/i })).not.toBeInTheDocument()
+    const tabs = within(screen.getByRole('navigation', { name: /tab bar/i })).getAllByRole('link')
+    expect(tabs.map((l) => l.textContent?.trim())).toEqual(['Overview', 'Devices', 'Messages', 'API keys'])
   })
 
   it('logout calls POST /app/logout and navigates to /login', async () => {

@@ -71,6 +71,7 @@ describe('Overview', () => {
     const send = step(/send your first sms/i)
     expect(within(send).getByText(new RegExp(`${window.location.origin}/v1/messages`))).toBeInTheDocument()
     expect(within(send).getByRole('button', { name: /copy/i })).toBeInTheDocument()
+    expect(within(send).getByRole('link', { name: /send a test/i })).toHaveAttribute('href', '/messages')
   })
 
   it('fills the curl snippet with the first device id when one exists', async () => {
