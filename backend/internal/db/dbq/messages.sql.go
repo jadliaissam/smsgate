@@ -55,6 +55,44 @@ func (q *Queries) ClaimMessage(ctx context.Context, arg ClaimMessageParams) (Cla
 	return i, err
 }
 
+const countMessagesByStatus = `-- name: CountMessagesByStatus :many
+SELECT status, count(*)::bigint AS n FROM messages
+WHERE user_id = $1 AND created_at >= $2
+GROUP BY status
+`
+
+type CountMessagesByStatusParams struct {
+	UserID uuid.UUID
+	Since  time.Time
+}
+
+type CountMessagesByStatusRow struct {
+	Status string
+	N      int64
+}
+
+// CountMessagesByStatus counts a user's messages created at or after @since,
+// per status (usage stats); served by messages_user_created_id_idx.
+func (q *Queries) CountMessagesByStatus(ctx context.Context, arg CountMessagesByStatusParams) ([]CountMessagesByStatusRow, error) {
+	rows, err := q.db.Query(ctx, countMessagesByStatus, arg.UserID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountMessagesByStatusRow
+	for rows.Next() {
+		var i CountMessagesByStatusRow
+		if err := rows.Scan(&i.Status, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireQueued = `-- name: ExpireQueued :many
 WITH c AS (
     SELECT id FROM messages

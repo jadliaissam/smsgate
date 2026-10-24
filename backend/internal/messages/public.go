@@ -35,6 +35,7 @@ func AppRoutes(mux *http.ServeMux, s *Service, sess, sendLimit func(http.Handler
 	mux.Handle("POST /app/messages", sess(sendLimit(httpx.Handle(s.create))))
 	mux.Handle("GET /app/messages/{id}", sess(httpx.Handle(s.get)))
 	mux.Handle("GET /app/messages", sess(httpx.Handle(s.list)))
+	mux.Handle("GET /app/stats", sess(httpx.Handle(s.stats)))
 }
 
 type createReq struct {
