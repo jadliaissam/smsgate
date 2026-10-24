@@ -165,30 +165,36 @@ func (q *Queries) Heartbeat(ctx context.Context, arg HeartbeatParams) (time.Time
 }
 
 const listDevices = `-- name: ListDevices :many
-SELECT id, name, sims, battery, charging, last_seen_at,
-       (last_seen_at IS NOT NULL AND last_seen_at > $1) AS online
+SELECT id, name, sims, battery, charging,
+       last_seen_at, ws_connected_at,
+       (COALESCE(last_seen_at > $1, false) OR COALESCE(ws_connected_at > $2, false))::bool AS online
 FROM devices
-WHERE user_id = $2 AND revoked_at IS NULL
+WHERE user_id = $3 AND revoked_at IS NULL
 ORDER BY created_at, id
 `
 
 type ListDevicesParams struct {
 	OnlineAfter *time.Time
+	WsAfter     *time.Time
 	UserID      uuid.UUID
 }
 
 type ListDevicesRow struct {
-	ID         uuid.UUID
-	Name       string
-	Sims       []byte
-	Battery    *int16
-	Charging   *bool
-	LastSeenAt *time.Time
-	Online     *bool
+	ID            uuid.UUID
+	Name          string
+	Sims          []byte
+	Battery       *int16
+	Charging      *bool
+	LastSeenAt    *time.Time
+	WsConnectedAt *time.Time
+	Online        bool
 }
 
+// Online = a heartbeat within the online window or a live WebSocket
+// (ws_connected_at refreshed within WS_STALE_AFTER); a live socket also counts
+// as seen, so the handler reports the later of last_seen_at and ws_connected_at.
 func (q *Queries) ListDevices(ctx context.Context, arg ListDevicesParams) ([]ListDevicesRow, error) {
-	rows, err := q.db.Query(ctx, listDevices, arg.OnlineAfter, arg.UserID)
+	rows, err := q.db.Query(ctx, listDevices, arg.OnlineAfter, arg.WsAfter, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +209,7 @@ func (q *Queries) ListDevices(ctx context.Context, arg ListDevicesParams) ([]Lis
 			&i.Battery,
 			&i.Charging,
 			&i.LastSeenAt,
+			&i.WsConnectedAt,
 			&i.Online,
 		); err != nil {
 			return nil, err
@@ -218,8 +225,9 @@ func (q *Queries) ListDevices(ctx context.Context, arg ListDevicesParams) ([]Lis
 const renameDevice = `-- name: RenameDevice :one
 UPDATE devices SET name = $3
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-RETURNING id, name, sims, battery, charging, last_seen_at,
-          (last_seen_at IS NOT NULL AND last_seen_at > $4) AS online
+RETURNING id, name, sims, battery, charging,
+          last_seen_at, ws_connected_at,
+          (COALESCE(last_seen_at > $4, false) OR COALESCE(ws_connected_at > $5, false))::bool AS online
 `
 
 type RenameDeviceParams struct {
@@ -227,16 +235,18 @@ type RenameDeviceParams struct {
 	UserID      uuid.UUID
 	Name        string
 	OnlineAfter *time.Time
+	WsAfter     *time.Time
 }
 
 type RenameDeviceRow struct {
-	ID         uuid.UUID
-	Name       string
-	Sims       []byte
-	Battery    *int16
-	Charging   *bool
-	LastSeenAt *time.Time
-	Online     *bool
+	ID            uuid.UUID
+	Name          string
+	Sims          []byte
+	Battery       *int16
+	Charging      *bool
+	LastSeenAt    *time.Time
+	WsConnectedAt *time.Time
+	Online        bool
 }
 
 func (q *Queries) RenameDevice(ctx context.Context, arg RenameDeviceParams) (RenameDeviceRow, error) {
@@ -245,6 +255,7 @@ func (q *Queries) RenameDevice(ctx context.Context, arg RenameDeviceParams) (Ren
 		arg.UserID,
 		arg.Name,
 		arg.OnlineAfter,
+		arg.WsAfter,
 	)
 	var i RenameDeviceRow
 	err := row.Scan(
@@ -254,24 +265,31 @@ func (q *Queries) RenameDevice(ctx context.Context, arg RenameDeviceParams) (Ren
 		&i.Battery,
 		&i.Charging,
 		&i.LastSeenAt,
+		&i.WsConnectedAt,
 		&i.Online,
 	)
 	return i, err
 }
 
 const revokeDevice = `-- name: RevokeDevice :execrows
-UPDATE devices SET revoked_at = $3, fcm_token = NULL
-WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+WITH r AS (
+    UPDATE devices SET revoked_at = $1, fcm_token = NULL, ws_connected_at = NULL
+    WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+    RETURNING id
+)
+SELECT pg_notify('smsgate_revoke', r.id::text) FROM r
 `
 
 type RevokeDeviceParams struct {
+	Now    *time.Time
 	ID     uuid.UUID
 	UserID uuid.UUID
-	Now    *time.Time
 }
 
+// RevokeDevice also tells every instance (LISTEN smsgate_revoke) to close the
+// device's WebSocket; the notification is sent when the statement commits.
 func (q *Queries) RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeDevice, arg.ID, arg.UserID, arg.Now)
+	result, err := q.db.Exec(ctx, revokeDevice, arg.Now, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -290,4 +308,62 @@ type UpdateFCMTokenParams struct {
 func (q *Queries) UpdateFCMToken(ctx context.Context, arg UpdateFCMTokenParams) error {
 	_, err := q.db.Exec(ctx, updateFCMToken, arg.ID, arg.FcmToken)
 	return err
+}
+
+const wSConnect = `-- name: WSConnect :execrows
+WITH d AS (
+    UPDATE devices SET ws_connected_at = $2
+    WHERE id = $3 AND revoked_at IS NULL
+    RETURNING id
+)
+SELECT pg_notify('smsgate_ws', d.id::text || ':' || $1::text) FROM d
+`
+
+type WSConnectParams struct {
+	ConnID string
+	At     *time.Time
+	ID     uuid.UUID
+}
+
+// WSConnect marks the device connected and announces the new connection
+// (LISTEN smsgate_ws, payload "<device_id>:<conn_id>") so an older socket on
+// another instance is closed. No row means the device is revoked.
+func (q *Queries) WSConnect(ctx context.Context, arg WSConnectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, wSConnect, arg.ConnID, arg.At, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const wSDisconnect = `-- name: WSDisconnect :exec
+UPDATE devices SET ws_connected_at = NULL WHERE id = $1 AND ws_connected_at = $2
+`
+
+type WSDisconnectParams struct {
+	ID uuid.UUID
+	At *time.Time
+}
+
+// WSDisconnect clears the mark only if no newer connection has replaced it.
+func (q *Queries) WSDisconnect(ctx context.Context, arg WSDisconnectParams) error {
+	_, err := q.db.Exec(ctx, wSDisconnect, arg.ID, arg.At)
+	return err
+}
+
+const wSTouch = `-- name: WSTouch :execrows
+UPDATE devices SET ws_connected_at = $1 WHERE id = $2 AND revoked_at IS NULL
+`
+
+type WSTouchParams struct {
+	At *time.Time
+	ID uuid.UUID
+}
+
+func (q *Queries) WSTouch(ctx context.Context, arg WSTouchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, wSTouch, arg.At, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

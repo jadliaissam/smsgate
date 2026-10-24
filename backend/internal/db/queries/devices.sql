@@ -39,9 +39,13 @@ UPDATE devices SET
 WHERE id = @id AND revoked_at IS NULL
 RETURNING now()::timestamptz AS server_time;
 
+-- Online = a heartbeat within the online window or a live WebSocket
+-- (ws_connected_at refreshed within WS_STALE_AFTER); a live socket also counts
+-- as seen, so the handler reports the later of last_seen_at and ws_connected_at.
 -- name: ListDevices :many
-SELECT id, name, sims, battery, charging, last_seen_at,
-       (last_seen_at IS NOT NULL AND last_seen_at > @online_after) AS online
+SELECT id, name, sims, battery, charging,
+       last_seen_at, ws_connected_at,
+       (COALESCE(last_seen_at > @online_after, false) OR COALESCE(ws_connected_at > @ws_after, false))::bool AS online
 FROM devices
 WHERE user_id = @user_id AND revoked_at IS NULL
 ORDER BY created_at, id;
@@ -49,9 +53,34 @@ ORDER BY created_at, id;
 -- name: RenameDevice :one
 UPDATE devices SET name = $3
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-RETURNING id, name, sims, battery, charging, last_seen_at,
-          (last_seen_at IS NOT NULL AND last_seen_at > @online_after) AS online;
+RETURNING id, name, sims, battery, charging,
+          last_seen_at, ws_connected_at,
+          (COALESCE(last_seen_at > @online_after, false) OR COALESCE(ws_connected_at > @ws_after, false))::bool AS online;
 
+-- RevokeDevice also tells every instance (LISTEN smsgate_revoke) to close the
+-- device's WebSocket; the notification is sent when the statement commits.
 -- name: RevokeDevice :execrows
-UPDATE devices SET revoked_at = @now, fcm_token = NULL
-WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
+WITH r AS (
+    UPDATE devices SET revoked_at = @now, fcm_token = NULL, ws_connected_at = NULL
+    WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL
+    RETURNING id
+)
+SELECT pg_notify('smsgate_revoke', r.id::text) FROM r;
+
+-- WSConnect marks the device connected and announces the new connection
+-- (LISTEN smsgate_ws, payload "<device_id>:<conn_id>") so an older socket on
+-- another instance is closed. No row means the device is revoked.
+-- name: WSConnect :execrows
+WITH d AS (
+    UPDATE devices SET ws_connected_at = @at
+    WHERE id = @id AND revoked_at IS NULL
+    RETURNING id
+)
+SELECT pg_notify('smsgate_ws', d.id::text || ':' || @conn_id::text) FROM d;
+
+-- name: WSTouch :execrows
+UPDATE devices SET ws_connected_at = @at WHERE id = @id AND revoked_at IS NULL;
+
+-- WSDisconnect clears the mark only if no newer connection has replaced it.
+-- name: WSDisconnect :exec
+UPDATE devices SET ws_connected_at = NULL WHERE id = @id AND ws_connected_at = @at;

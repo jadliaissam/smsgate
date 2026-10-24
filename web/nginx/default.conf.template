@@ -31,9 +31,24 @@ server {
     # Every location includes snippets/security.conf itself: nginx does not
     # inherit add_header from the server level once a location adds its own.
 
-    location ~ ^/(app|v1|device)/ {
+    # Upstream read timeout for proxied API calls; /device/ overrides it (set
+    # here, not in proxy.conf, since a location may not repeat the directive).
+    proxy_read_timeout 75s;
+
+    location ~ ^/(app|v1)/ {
         include /etc/nginx/snippets/security.conf;
         include /etc/nginx/snippets/proxy.conf;
+        proxy_pass $backend;
+    }
+
+    # Device API, including the WebSocket GET /device/v1/ws: an idle socket
+    # carries a client ping every 5 minutes, so both directions may stay
+    # silent that long (the API closes sockets silent past WS_PING_TIMEOUT=6m).
+    location /device/ {
+        include /etc/nginx/snippets/security.conf;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_read_timeout 7m;
+        proxy_send_timeout 7m;
         proxy_pass $backend;
     }
 

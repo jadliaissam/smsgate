@@ -71,6 +71,13 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `WAKE_CONCURRENCY` | `64` | concurrent wake-up pushes |
 | `WAKE_TIMEOUT` | `5s` | per-push HTTP timeout |
 | `FCM_HTTP_MAX_IDLE_PER_HOST` | `16` | |
+| `WS_PING_TIMEOUT` | `6m` | a device WebSocket that sends no frame for this long is closed (`4000`); the app pings every 5 min |
+| `WS_WRITE_TIMEOUT` | `10s` | per-frame write budget on a device WebSocket; a stuck socket is dropped |
+| `WS_MAX_CONNS` | `10000` | device WebSockets per instance (about 10 KiB each when idle); further upgrades get `503 ws_capacity` |
+| `WS_STALE_AFTER` | `7m` | a device counts as connected (online, and FCM skipped) while its socket mark was refreshed within this; must exceed `WS_PING_TIMEOUT`. Covers instances that died without clearing the mark |
+| `WS_FCM_FALLBACK` | `10s` | a message woken over a WebSocket that is still unclaimed after this also gets an FCM push (half-dead sockets); `0` = never |
+| `WS_LISTEN_RETRY_MAX` | `30s` | max backoff (jittered, from 0.5 s) when reconnecting the dedicated `LISTEN` connection |
+| `WS_LISTEN_PING_INTERVAL` | `30s` | the idle `LISTEN` connection is health-checked this often |
 | `MAILER` | `smtp` (`log` when `APP_ENV=dev`) | `smtp` or `log`. `log` outside dev is allowed but logs a startup warning |
 | `SMTP_HOST` | empty | required when `MAILER=smtp` |
 | `SMTP_PORT` | `587` | STARTTLS when offered; port 465 uses implicit TLS |
@@ -109,6 +116,23 @@ The dashboard uses the same message endpoints under session auth: `POST /app/mes
 
 Request bodies must be sent with `Content-Type: application/json` (otherwise `415 unsupported_media_type`). Over a rate limit the API answers `429 rate_limited` with `Retry-After` (seconds). An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`, `GET /device/v1/me` (returns `{device_id, name, account_email, server_time}` so the app can show which account and name it is paired as) and `POST /device/v1/unregister` (`204`; revokes the calling device exactly like the dashboard's revoke, after which its token gets `401`). Errors are JSON with a stable `code`.
 
+### Device WebSocket
+
+`GET /device/v1/ws` with `Authorization: Bearer <device token>` upgrades to a WebSocket (no Origin check, no subprotocol, no compression). A missing, invalid or revoked token gets `401` and an exhausted per-device rate limit `429` before any upgrade (the upgrade and every frame count against `RL_DEVICE_PER_MIN`); a full instance answers `503 ws_capacity`, one shutting down `503 shutting_down`. Frames are JSON text messages:
+
+| Direction | Frame | Notes |
+|---|---|---|
+| device → server | `{"type":"ping"}` | keepalive; send one at least every 5 min (`WS_PING_TIMEOUT`) |
+| device → server | `{"type":"heartbeat", "battery":…, "charging":…, "signal":…, "sims":[…], "app_version":…}` | same fields and validation as `POST /device/v1/heartbeat`, so a connected phone needs no separate HTTP heartbeat |
+| server → device | `{"type":"pong","server_time":"<RFC 3339 UTC>"}` | reply to both; `server_time` is the DB clock for a heartbeat (as over HTTP) and the API clock for a ping |
+| server → device | `{"type":"new","message_id":"<uuid>"}` | a message is queued: claim it as after an FCM push (may duplicate a push; dedupe by id) |
+| server → device | `{"type":"revoked"}` | the device was revoked (dashboard or `unregister`); the socket then closes with `4003` |
+| server → device | `{"type":"error","code":"…","message":"…"}` | bad frame; the socket stays open. Codes: `invalid_json`, `unknown_type`, `unsupported_frame` (binary), `rate_limited`, `invalid_heartbeat`, `unauthorized`, `internal_error` |
+
+Close codes: `4000` no frame within `WS_PING_TIMEOUT`, `4001` replaced by a newer connection of the same device (one socket per device, across instances), `4003` revoked, `1001` server shutting down (reconnect), `1011` internal error, `1013` instance full. After every (re)connect the device should send a heartbeat and call `GET /device/v1/messages/pending`, because nothing missed while disconnected is replayed over the socket.
+
+Wake routing: creating a message NOTIFYs `smsgate_wake` in the same statement; every instance `LISTEN`s on one dedicated connection (outside the pool, so each instance uses up to `DB_MAX_CONNS + 1` connections) and forwards `new` to sockets it holds. FCM is sent at once only when the device has no live socket (`devices.ws_connected_at` refreshed within `WS_STALE_AFTER`); otherwise only if the message is still unclaimed after `WS_FCM_FALLBACK`. Revocation NOTIFYs `smsgate_revoke`, and a new socket `smsgate_ws` (so an older one on another instance closes). A device counts as online in `GET /app/devices` and `GET /v1/devices` with a heartbeat within `DEVICE_ONLINE_WINDOW` or a live socket, and `last_seen_at` is the later of the two.
+
 ## Container and CapRover
 
 `backend/Dockerfile` is a multi-stage build (Go on Alpine, then `distroless/static:nonroot`, about 5 MB, `GOMEMLIMIT=96MiB`, port 8080). It builds with the classic builder, no BuildKit features. The image health check runs `/smsgate -healthcheck` (GET `/healthz` on the loopback address derived from `HTTP_ADDR`).
@@ -118,18 +142,18 @@ Request bodies must be sent with `Content-Type: application/json` (otherwise `41
 
 CapRover (the API sits behind the web dashboard's nginx, which serves the SPA and proxies `/app`, `/v1`, `/device` and `/healthz` to the API on the same origin):
 
-1. Create the API app, e.g. `smsgate-api`. Set **Container HTTP Port** to `8080` (the image listens on `HTTP_ADDR=:8080`). The app may stay internal (no public domain, no HTTPS needed): the web app's nginx reaches it at `http://srv-captain--smsgate-api:8080`. Enable WebSocket support now if you want it ready for the later realtime step.
+1. Create the API app, e.g. `smsgate-api`. Set **Container HTTP Port** to `8080` (the image listens on `HTTP_ADDR=:8080`). The app may stay internal (no public domain, no HTTPS needed): the web app's nginx reaches it at `http://srv-captain--smsgate-api:8080`. Device WebSockets also arrive through the web app (see its CapRover settings below); WebSocket support on this internal app is not needed.
 2. In App Configs set the environment variables: at least `DATABASE_URL`, `PUBLIC_URL` (the **web app's** public https origin, e.g. `https://sms.example.com`, not the API's internal address), `SMTP_HOST`, `SMTP_FROM` (+ credentials). For push wake-ups paste the Firebase service-account JSON into `FCM_CREDENTIALS_JSON` (simplest on CapRover), or mount a file and point `FCM_CREDENTIALS_FILE` at it; the file must be readable by uid 65532 (the distroless nonroot user).
 3. Deploy: normally CI does it (see [Deployment pipeline](#deployment-pipeline)). For a manual deploy of the same kind, `npx caprover deploy --caproverUrl ... --appToken ... --appName smsgate-api --imageName ghcr.io/<owner>/smsgate-api:<sha>`. Deploying the `backend/` directory as source (`captain-definition` with `./Dockerfile`, built on the server) still works as a fallback.
 4. Enable HTTPS and force HTTPS on the **web** app (the public entry point); the session cookie is `Secure` by default. The default `TRUSTED_PROXIES` (private ranges) covers CapRover's nginx and the web app's nginx, so rate limits see the real client IP from `X-Forwarded-For`.
 
 CI (`.github/workflows/backend.yml`): every push and pull request touching `backend/` runs gofmt, `go vet`, a sqlc drift check, `go test -race` against Postgres 17, the smoke test and a Docker image build; a push to `main` also deploys (see below).
 
-Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
+Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`; device WebSockets are routed between instances with Postgres `LISTEN/NOTIFY` (see [Device WebSocket](#device-websocket)). An idle device socket costs about 10 KiB, so many thousands of them need a higher `GOMEMLIMIT` than the image's 96 MiB. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
 
 ## Web dashboard deployment
 
-`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache, `/revision.txt` with the `REVISION` build arg, no-store), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
+`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache, `/revision.txt` with the `REVISION` build arg, no-store), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/device/` (which carries the device WebSocket) has 7-minute proxy read and send timeouts so an idle socket with 5-minute client pings survives; the other API routes keep 75 s. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -138,7 +162,7 @@ Migrations run automatically at startup under a Postgres advisory lock, so sever
 
 Both are substituted into `web/nginx/default.conf.template` at container start; nothing else is substituted, so nginx's own `$variables` are untouched.
 
-CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point); CI deploys it (see [Deployment pipeline](#deployment-pipeline)). Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
+CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point); CI deploys it (see [Deployment pipeline](#deployment-pipeline)). For the device WebSocket, turn on **Websocket Support** in its HTTP Settings and, since CapRover's own nginx uses nginx's default 60 s proxy read timeout and would cut an idle socket, add `proxy_read_timeout 7m; proxy_send_timeout 7m;` to its `location /` block via **Edit Default Nginx Configurations**. Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
 
 Local check against a locally running backend:
 

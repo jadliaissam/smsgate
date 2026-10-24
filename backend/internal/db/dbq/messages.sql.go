@@ -262,7 +262,7 @@ func (q *Queries) FailLostDispatched(ctx context.Context, arg FailLostDispatched
 }
 
 const getDeviceForUser = `-- name: GetDeviceForUser :one
-SELECT id, fcm_token, sims FROM devices
+SELECT id, fcm_token, sims, ws_connected_at FROM devices
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
 `
 
@@ -272,15 +272,21 @@ type GetDeviceForUserParams struct {
 }
 
 type GetDeviceForUserRow struct {
-	ID       uuid.UUID
-	FcmToken *string
-	Sims     []byte
+	ID            uuid.UUID
+	FcmToken      *string
+	Sims          []byte
+	WsConnectedAt *time.Time
 }
 
 func (q *Queries) GetDeviceForUser(ctx context.Context, arg GetDeviceForUserParams) (GetDeviceForUserRow, error) {
 	row := q.db.QueryRow(ctx, getDeviceForUser, arg.ID, arg.UserID)
 	var i GetDeviceForUserRow
-	err := row.Scan(&i.ID, &i.FcmToken, &i.Sims)
+	err := row.Scan(
+		&i.ID,
+		&i.FcmToken,
+		&i.Sims,
+		&i.WsConnectedAt,
+	)
 	return i, err
 }
 
@@ -475,7 +481,7 @@ WITH m AS (
 ), e AS (
     INSERT INTO message_events (message_id, status) SELECT id, 'queued' FROM m
 )
-SELECT id, user_id, device_id, sim_slot, to_number, status, expires_at, client_ref, error_code, error_message, created_at, dispatched_at, sent_at, delivered_at, failed_at FROM m
+SELECT m.id, m.user_id, m.device_id, m.sim_slot, m.to_number, m.status, m.expires_at, m.client_ref, m.error_code, m.error_message, m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at FROM m, LATERAL (SELECT pg_notify('smsgate_wake', m.device_id::text || ':' || m.id::text)) n
 `
 
 type InsertMessageParams struct {
@@ -515,6 +521,9 @@ type InsertMessageRow struct {
 // (user_id, idempotency_key) pair already exists nothing is inserted (no event
 // either, the data-modifying CTE selects from the empty m) and no row returns.
 // The body is never read back.
+// The lateral pg_notify wakes the device's WebSocket on whichever instance
+// holds it (LISTEN smsgate_wake, payload "<device_id>:<message_id>"); it is
+// delivered when this statement commits, and not at all on an idempotent replay.
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (InsertMessageRow, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
 		arg.ID,
@@ -749,6 +758,19 @@ func (q *Queries) ListPending(ctx context.Context, arg ListPendingParams) (ListP
 	var i ListPendingRow
 	err := row.Scan(&i.ServerTime, &i.Ids, &i.ExpiresAts)
 	return i, err
+}
+
+const messageStillQueued = `-- name: MessageStillQueued :one
+SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages WHERE id = $1
+`
+
+// MessageStillQueued: true while the message waits for a claim and is not
+// expired (decides the FCM fallback for socket-connected devices).
+func (q *Queries) MessageStillQueued(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, messageStillQueued, id)
+	var queued bool
+	err := row.Scan(&queued)
+	return queued, err
 }
 
 const transitionStatus = `-- name: TransitionStatus :one

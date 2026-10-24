@@ -1,5 +1,5 @@
 -- name: GetDeviceForUser :one
-SELECT id, fcm_token, sims FROM devices
+SELECT id, fcm_token, sims, ws_connected_at FROM devices
 WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL;
 
 -- InsertMessage creates the queued message and its 'queued' event in ONE
@@ -20,7 +20,10 @@ WITH m AS (
 ), e AS (
     INSERT INTO message_events (message_id, status) SELECT id, 'queued' FROM m
 )
-SELECT * FROM m;
+-- The lateral pg_notify wakes the device's WebSocket on whichever instance
+-- holds it (LISTEN smsgate_wake, payload "<device_id>:<message_id>"); it is
+-- delivered when this statement commits, and not at all on an idempotent replay.
+SELECT m.* FROM m, LATERAL (SELECT pg_notify('smsgate_wake', m.device_id::text || ':' || m.id::text)) n;
 
 -- GetMessageByIdem loads an idempotent replay's original (no body).
 -- name: GetMessageByIdem :one
@@ -173,3 +176,8 @@ SELECT * FROM u;
 SELECT status, count(*)::bigint AS n FROM messages
 WHERE user_id = @user_id AND created_at >= @since
 GROUP BY status;
+
+-- MessageStillQueued: true while the message waits for a claim and is not
+-- expired (decides the FCM fallback for socket-connected devices).
+-- name: MessageStillQueued :one
+SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages WHERE id = @id;

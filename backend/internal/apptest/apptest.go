@@ -4,6 +4,7 @@ package apptest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/smsgate/backend/internal/db/dbq"
 	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
+	"github.com/smsgate/backend/internal/realtime"
 	"github.com/smsgate/backend/internal/server"
 	"github.com/smsgate/backend/internal/testdb"
 )
@@ -32,6 +34,7 @@ type App struct {
 	Waker    *push.Recorder
 	Mailer   *accounts.MemMailer
 	Messages *messages.Service
+	Hub      *realtime.Hub
 	Cfg      config.Config
 
 	t      *testing.T
@@ -52,9 +55,21 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	for _, o := range opts {
 		o(&cfg)
 	}
+	return start(t, testdb.NewMax(t, cfg.DBMaxConns), cfg)
+}
+
+// Peer starts a second server instance on the same database (its own hub,
+// LISTEN connection, push recorder and clock), as with several replicas.
+func (a *App) Peer(t *testing.T) *App {
+	t.Helper()
+	return start(t, a.Pool, a.Cfg)
+}
+
+func start(t *testing.T, pool *pgxpool.Pool, cfg config.Config) *App {
+	t.Helper()
 	a := &App{
 		t:      t,
-		Pool:   testdb.NewMax(t, cfg.DBMaxConns),
+		Pool:   pool,
 		Waker:  &push.Recorder{},
 		Mailer: &accounts.MemMailer{},
 		Cfg:    cfg,
@@ -63,7 +78,9 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a.Messages = messages.NewService(dbq.New(a.Pool), a.Waker, cfg, log)
+	a.Hub = server.NewHub(a.Pool, cfg, log, a.Now)
 	h := server.New(server.Deps{
+		Hub:      a.Hub,
 		Pool:     a.Pool,
 		Messages: a.Messages,
 		Log:      log,
@@ -78,6 +95,19 @@ func New(t *testing.T, opts ...func(*config.Config)) *App {
 	// drain, and only then is the pool (registered earlier) dropped.
 	t.Cleanup(a.Messages.Wait)
 	t.Cleanup(ts.Close)
+	// The listener is ready before the app is returned, so a test's first
+	// notification is not missed. Sockets close before the server and pool.
+	ctx, cancel := context.WithCancel(context.Background())
+	l := realtime.NewListener(a.Pool.Config().ConnConfig, a.Hub, log, cfg.WSListenRetryMax, cfg.WSListenPingInterval)
+	done := make(chan struct{})
+	go func() { defer close(done); l.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() { a.Hub.Shutdown(context.Background()) })
+	select {
+	case <-l.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("notify listener not ready")
+	}
 	return a
 }
 

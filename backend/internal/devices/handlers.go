@@ -155,35 +155,51 @@ func (s *service) setFCMToken(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// heartbeatReq is the heartbeat payload, shared by POST /device/v1/heartbeat
+// and the WebSocket "heartbeat" frame.
+type heartbeatReq struct {
+	Battery    *int16 `json:"battery"`
+	Charging   *bool  `json:"charging"`
+	Signal     *int16 `json:"signal"`
+	SIMs       []SIM  `json:"sims"` // nil = unchanged
+	AppVersion string `json:"app_version"`
+}
+
 func (s *service) heartbeat(w http.ResponseWriter, r *http.Request) error {
-	var in struct {
-		Battery    *int16 `json:"battery"`
-		Charging   *bool  `json:"charging"`
-		Signal     *int16 `json:"signal"`
-		SIMs       []SIM  `json:"sims"` // nil = unchanged
-		AppVersion string `json:"app_version"`
-	}
+	var in heartbeatReq
 	if err := httpx.Decode(w, r, &in, s.Cfg.MaxBodyBytes); err != nil {
 		return err
 	}
+	serverTime, err := s.applyHeartbeat(r.Context(), FromContext(r.Context()).ID, in)
+	if err != nil {
+		return err
+	}
+	return httpx.JSON(w, http.StatusOK, struct {
+		ServerTime time.Time `json:"server_time"`
+	}{serverTime})
+}
+
+// applyHeartbeat validates in and records it, returning the DB clock (UTC).
+// Validation failures are 422 invalid_heartbeat; a revoked device is 401.
+func (s *service) applyHeartbeat(ctx context.Context, deviceID uuid.UUID, in heartbeatReq) (time.Time, error) {
 	bad := func(msg string) error { return httpx.Unprocessable("invalid_heartbeat", msg) }
 	if in.Battery != nil && (*in.Battery < 0 || *in.Battery > 100) {
-		return bad("battery must be 0-100")
+		return time.Time{}, bad("battery must be 0-100")
 	}
 	if in.Signal != nil && (*in.Signal < 0 || *in.Signal > 4) {
-		return bad("signal must be 0-4")
+		return time.Time{}, bad("signal must be 0-4")
 	}
 	if !validSIMs(in.SIMs) {
-		return bad("sims must have at most 4 entries with unique slots 0-3")
+		return time.Time{}, bad("sims must have at most 4 entries with unique slots 0-3")
 	}
 	if utf8.RuneCountInString(in.AppVersion) > maxAppVersion {
-		return bad("app_version must be at most 32 characters")
+		return time.Time{}, bad("app_version must be at most 32 characters")
 	}
-	p := dbq.HeartbeatParams{ID: FromContext(r.Context()).ID, Battery: in.Battery, Charging: in.Charging, Signal: in.Signal}
+	p := dbq.HeartbeatParams{ID: deviceID, Battery: in.Battery, Charging: in.Charging, Signal: in.Signal}
 	if in.SIMs != nil {
 		b, err := encodeSIMs(in.SIMs)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		p.Sims = b
 	}
@@ -192,32 +208,42 @@ func (s *service) heartbeat(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := s.Now()
 	p.Now = &now
-	serverTime, err := s.Q.Heartbeat(r.Context(), p)
+	serverTime, err := s.Q.Heartbeat(ctx, p)
 	if err != nil {
 		if isNoRows(err) { // revoked between authentication and update
-			return httpx.Unauthorized()
+			return time.Time{}, httpx.Unauthorized()
 		}
-		return err
+		return time.Time{}, err
 	}
-	return httpx.JSON(w, http.StatusOK, struct {
-		ServerTime time.Time `json:"server_time"`
-	}{serverTime.UTC()})
+	return serverTime.UTC(), nil
 }
 
-func (s *service) onlineAfter() *time.Time {
-	t := s.Now().Add(-s.Cfg.OnlineWindow)
-	return &t
+// onlineParams returns the cut-offs for "online": a heartbeat within the
+// online window, or a WebSocket refreshed within WS_STALE_AFTER.
+func (s *service) onlineParams() (heartbeatAfter, wsAfter *time.Time) {
+	now := s.Now()
+	h, w := now.Add(-s.Cfg.OnlineWindow), now.Add(-s.Cfg.WSStaleAfter)
+	return &h, &w
+}
+
+// toJSON renders a device row; a live socket counts as seen, so last_seen_at
+// is the later of the heartbeat time and the socket refresh time.
+func toJSON(id uuid.UUID, name string, sims []byte, battery *int16, charging *bool, seen, ws *time.Time, online bool) deviceJSON {
+	if ws != nil && (seen == nil || ws.After(*seen)) {
+		seen = ws
+	}
+	return deviceJSON{ID: id, Name: name, Online: online, SIMs: decodeSIMs(sims), Battery: battery, Charging: charging, LastSeenAt: seen}
 }
 
 func (s *service) list(w http.ResponseWriter, r *http.Request) error {
-	rows, err := s.Q.ListDevices(r.Context(), dbq.ListDevicesParams{UserID: accounts.UserID(r.Context()), OnlineAfter: s.onlineAfter()})
+	hb, ws := s.onlineParams()
+	rows, err := s.Q.ListDevices(r.Context(), dbq.ListDevicesParams{UserID: accounts.UserID(r.Context()), OnlineAfter: hb, WsAfter: ws})
 	if err != nil {
 		return err
 	}
 	out := make([]deviceJSON, len(rows))
 	for i, d := range rows {
-		out[i] = deviceJSON{ID: d.ID, Name: d.Name, Online: d.Online != nil && *d.Online, SIMs: decodeSIMs(d.Sims),
-			Battery: d.Battery, Charging: d.Charging, LastSeenAt: d.LastSeenAt}
+		out[i] = toJSON(d.ID, d.Name, d.Sims, d.Battery, d.Charging, d.LastSeenAt, d.WsConnectedAt, d.Online)
 	}
 	return httpx.JSON(w, http.StatusOK, struct {
 		Data []deviceJSON `json:"data"`
@@ -239,15 +265,15 @@ func (s *service) rename(w http.ResponseWriter, r *http.Request) error {
 	if !validName(name) {
 		return invalidName()
 	}
-	d, err := s.Q.RenameDevice(r.Context(), dbq.RenameDeviceParams{ID: id, UserID: accounts.UserID(r.Context()), Name: name, OnlineAfter: s.onlineAfter()})
+	hb, ws := s.onlineParams()
+	d, err := s.Q.RenameDevice(r.Context(), dbq.RenameDeviceParams{ID: id, UserID: accounts.UserID(r.Context()), Name: name, OnlineAfter: hb, WsAfter: ws})
 	if err != nil {
 		if isNoRows(err) {
 			return notFound()
 		}
 		return err
 	}
-	return httpx.JSON(w, http.StatusOK, deviceJSON{ID: d.ID, Name: d.Name, Online: d.Online != nil && *d.Online, SIMs: decodeSIMs(d.Sims),
-		Battery: d.Battery, Charging: d.Charging, LastSeenAt: d.LastSeenAt})
+	return httpx.JSON(w, http.StatusOK, toJSON(d.ID, d.Name, d.Sims, d.Battery, d.Charging, d.LastSeenAt, d.WsConnectedAt, d.Online))
 }
 
 func (s *service) revoke(w http.ResponseWriter, r *http.Request) error {
@@ -299,7 +325,10 @@ func (s *service) unregister(w http.ResponseWriter, r *http.Request) error {
 }
 
 // revokeDevice revokes a device owned by userID; false when it does not exist
-// or is already revoked. Single place for everything revocation triggers.
+// or is already revoked. Single place for everything revocation triggers: the
+// RevokeDevice statement also clears ws_connected_at and NOTIFYs
+// smsgate_revoke, so whichever instance holds the device's WebSocket sends
+// {"type":"revoked"} and closes it with 4003.
 func (s *service) revokeDevice(ctx context.Context, deviceID, userID uuid.UUID) (bool, error) {
 	now := s.Now()
 	n, err := s.Q.RevokeDevice(ctx, dbq.RevokeDeviceParams{ID: deviceID, UserID: userID, Now: &now})

@@ -22,19 +22,20 @@ type ApiKey struct {
 }
 
 type Device struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	Name       string
-	TokenHash  string
-	FcmToken   *string
-	Sims       []byte
-	AppVersion *string
-	Battery    *int16
-	Charging   *bool
-	Signal     *int16
-	LastSeenAt *time.Time
-	RevokedAt  *time.Time
-	CreatedAt  time.Time
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	Name          string
+	TokenHash     string
+	FcmToken      *string
+	Sims          []byte
+	AppVersion    *string
+	Battery       *int16
+	Charging      *bool
+	Signal        *int16
+	LastSeenAt    *time.Time
+	RevokedAt     *time.Time
+	CreatedAt     time.Time
+	WsConnectedAt *time.Time
 }
 
 type EmailToken struct {

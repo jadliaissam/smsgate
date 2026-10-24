@@ -17,6 +17,7 @@ import (
 	"github.com/smsgate/backend/internal/config"
 	"github.com/smsgate/backend/internal/db/dbq"
 	"github.com/smsgate/backend/internal/httpx"
+	"github.com/smsgate/backend/internal/realtime"
 )
 
 const (
@@ -46,6 +47,10 @@ type Deps struct {
 	// AuthLimit (per client IP) wraps POST /device/v1/register; DeviceLimit
 	// (per device, applied after RequireDevice) the other /device/v1 routes.
 	AuthLimit, DeviceLimit func(http.Handler) http.Handler
+	// Hub serves GET /device/v1/ws (route absent when nil). FrameLimit, when
+	// set, applies the per-device rate limit to each frame received on it.
+	Hub        *realtime.Hub
+	FrameLimit func(device uuid.UUID) bool
 }
 
 type service struct{ Deps }
@@ -76,6 +81,9 @@ func Routes(mux *http.ServeMux, d Deps) {
 	mux.Handle("POST /device/v1/heartbeat", dev(devRL(handle(s.heartbeat))))
 	mux.Handle("GET /device/v1/me", dev(devRL(handle(s.me))))
 	mux.Handle("POST /device/v1/unregister", dev(devRL(handle(s.unregister))))
+	if d.Hub != nil {
+		mux.Handle("GET /device/v1/ws", dev(devRL(handle(s.ws))))
+	}
 }
 
 func handle(h httpx.HandlerFunc) http.Handler { return httpx.Handle(h) }
