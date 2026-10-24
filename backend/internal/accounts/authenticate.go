@@ -43,7 +43,8 @@ func HashErr(err error) error {
 	return err
 }
 
-// ErrEmailNotVerified is returned (403) by RequireVerified for unverified users.
+// ErrEmailNotVerified is returned (403) by RequireVerified and the Verified
+// middleware for unverified users.
 var ErrEmailNotVerified = &httpx.Error{Status: http.StatusForbidden, Code: "email_not_verified", Message: "verify your email first"}
 
 // Authenticate returns the user for email (trimmed, case-insensitive) and
