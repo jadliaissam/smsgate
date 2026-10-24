@@ -145,12 +145,12 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
   return (
     <div className="grid gap-6 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-8">
       <div className="relative mx-auto w-56 sm:w-52">
-        {/* Soft brand glow behind the card; the card itself stays white in both themes so phones can scan it. */}
+        {/* Soft brand glow behind the card; the card itself is qr-surface (white) in both themes so phones can scan it. */}
         <div
           aria-hidden="true"
           className="absolute -inset-3 rounded-[28px] bg-linear-to-br from-brand-400/60 via-brand-500/35 to-brand-700/50 blur-xl animate-glow motion-reduce:animate-none dark:from-brand-500/50 dark:to-brand-800/50"
         />
-        <div className="relative aspect-square overflow-hidden rounded-2xl bg-white p-2 shadow-raised ring-1 ring-ink-950/5">
+        <div className="relative aspect-square overflow-hidden rounded-2xl bg-qr-surface p-2 shadow-raised ring-1 ring-ink-950/5">
           {issued ? (
             <QrCode
               value={issued.qrPayload}
@@ -163,7 +163,7 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
             <Skeleton className="size-full rounded-xl" />
           )}
           {expired && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/70 p-4 text-center animate-fade-in motion-reduce:animate-none">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-qr-surface/70 p-4 text-center animate-fade-in motion-reduce:animate-none">
               <p className="text-sm font-semibold text-ink-900">Code expired</p>
               <Button size="sm" loading={create.isPending} onClick={generate}>
                 Generate new code
@@ -273,7 +273,7 @@ function QrCode({ value, className }: { value: string; className?: string }) {
       shapeRendering="crispEdges"
       className={className}
     >
-      <rect x={-quiet} y={-quiet} width={size + quiet * 2} height={size + quiet * 2} className="fill-white" />
+      <rect x={-quiet} y={-quiet} width={size + quiet * 2} height={size + quiet * 2} className="fill-qr-surface" />
       <path d={path} className="fill-ink-950" />
     </svg>
   )
@@ -327,7 +327,7 @@ function PairedView({ device }: { device: Device }) {
           aria-hidden="true"
           className="absolute inset-0 rounded-full bg-success-500/40 animate-ping-soft motion-reduce:animate-none"
         />
-        <span className="relative flex size-16 items-center justify-center rounded-full bg-linear-to-br from-success-500 to-success-600 text-white shadow-raised animate-success-pop motion-reduce:animate-none">
+        <span className="relative flex size-16 items-center justify-center rounded-full bg-linear-to-br from-success-600 to-success-700 text-fg-on-success shadow-raised animate-success-pop motion-reduce:animate-none">
           <svg
             viewBox="0 0 24 24"
             fill="none"

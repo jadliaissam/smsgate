@@ -21,7 +21,7 @@ const variants: Record<ButtonVariant, string> = {
     'bg-surface text-fg border border-border shadow-control hover:bg-surface-hover hover:border-border-strong',
   ghost: 'text-fg-muted hover:bg-surface-hover hover:text-fg',
   danger:
-    'bg-danger-600 text-fg-on-brand shadow-control inset-ring inset-ring-fg-on-brand/10 hover:bg-danger-700 ' +
+    'bg-danger-600 text-fg-on-danger shadow-control inset-ring inset-ring-fg-on-danger/10 hover:bg-danger-700 ' +
     'focus-visible:ring-danger-500/60',
 }
 

@@ -6,10 +6,17 @@ import { join } from 'node:path'
 // danger, and the semantic aliases), never Tailwind's raw palette or
 // arbitrary color literals.
 const dir = join(import.meta.dirname)
-// The ui kit plus the app's layout and pages: one discipline everywhere.
-const sources = ['.', '../layout', '../pages'].flatMap((sub) =>
+// The ui kit, the app's layout and pages, and the root src/*.tsx files: one
+// discipline everywhere.
+const scanned: [string, RegExp][] = [
+  ['.', /\.(tsx?|css)$/],
+  ['../layout', /\.(tsx?|css)$/],
+  ['../pages', /\.(tsx?|css)$/],
+  ['..', /\.tsx$/],
+]
+const sources = scanned.flatMap(([sub, ext]) =>
   readdirSync(join(dir, sub))
-    .filter((f) => /\.(tsx?|css)$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .filter((f) => ext.test(f) && !/\.test\.tsx?$/.test(f))
     .map((f) => ({ file: join(sub, f), src: readFileSync(join(dir, sub, f), 'utf8') })),
 )
 
@@ -17,14 +24,31 @@ const palette =
   'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose'
 const rawPalette = new RegExp(`\\b[a-z-]+-(?:${palette})-(?:50|[1-9]00|950)\\b`)
 const arbitraryColor = /-\[(?:#|rgb|hsl|oklch|color)/
-// Bare white/black color utilities (any variant prefix or /opacity): use a
-// semantic token such as fg-on-brand instead.
-const bareWhiteBlack = /(?<![\w-])(?:[\w-]+:)*(?:inset-ring|ring|text|bg|border|from|via|to|fill|stroke|outline|shadow|divide|decoration|placeholder|caret|accent)-(?:white|black)(?![\w-])/
-
-// Files owned by a parallel task (W5 devices review) that still use bare
-// white: `it.fails` keeps CI green now and turns red once they are fixed, so
-// the exemption is removed rather than forgotten.
-const pendingWhiteBlack = new Set(['../pages/Devices.tsx', '../pages/PairModal.tsx'])
+// Bare white/black color utilities (any variant prefix, side/direction or
+// /opacity): use a semantic token such as fg-on-brand or qr-surface instead.
+const colorUtilities = [
+  'inset-ring',
+  'ring-offset',
+  'ring',
+  'inset-shadow',
+  'drop-shadow',
+  'shadow',
+  'text',
+  'bg',
+  'border(?:-[tblrxyse])?',
+  'divide',
+  'outline',
+  'from',
+  'via',
+  'to',
+  'fill',
+  'stroke',
+  'decoration',
+  'placeholder',
+  'caret',
+  'accent',
+].join('|')
+const bareWhiteBlack = new RegExp(`(?<![\\w-])(?:[\\w/-]+:)*-?(?:${colorUtilities})-(?:white|black)(?![\\w-])`)
 
 describe('design tokens only', () => {
   it.each(sources)('$file uses no raw palette colors', ({ src }) => {
@@ -32,18 +56,33 @@ describe('design tokens only', () => {
     expect(src.match(arbitraryColor)?.[0] ?? null).toBeNull()
   })
 
-  for (const { file, src } of sources) {
-    const check = pendingWhiteBlack.has(file) ? it.fails : it
-    check(`${file} uses no bare white/black color utilities`, () => {
-      expect(src.match(bareWhiteBlack)?.[0] ?? null).toBeNull()
-    })
-  }
+  it.each(sources)('$file uses no bare white/black color utilities', ({ src }) => {
+    expect(src.match(bareWhiteBlack)?.[0] ?? null).toBeNull()
+  })
+
+  it('scans the root src/*.tsx files too', () => {
+    expect(sources.map((s) => s.file)).toEqual(expect.arrayContaining(['../App.tsx', '../router.tsx']))
+  })
 
   it('the detector catches bare white/black utilities', () => {
-    for (const c of ['text-white', 'inset-ring-white/15', 'dark:hover:bg-black/50', 'from-white', 'ring-black', 'fill-white']) {
+    for (const c of [
+      'text-white',
+      'inset-ring-white/15',
+      'dark:hover:bg-black/50',
+      'from-white',
+      'ring-black',
+      'fill-white',
+      'ring-offset-white',
+      'border-t-white',
+      'border-x-black/10',
+      'drop-shadow-black/20',
+      'inset-shadow-white/10',
+      'group-hover/tip:bg-white',
+      'focus-visible:ring-offset-black',
+    ]) {
       expect(bareWhiteBlack.test(c), c).toBe(true)
     }
-    for (const c of ['text-fg-on-brand', 'whitespace-nowrap', 'bg-surface', 'inset-ring-fg-on-brand/15', 'text-whitesmoke']) {
+    for (const c of ['text-fg-on-brand', 'whitespace-nowrap', 'bg-surface', 'inset-ring-fg-on-brand/15', 'text-whitesmoke', 'bg-qr-surface']) {
       expect(bareWhiteBlack.test(c), c).toBe(false)
     }
   })
@@ -110,8 +149,13 @@ const textPairs = ['color-fg', 'color-fg-muted', 'color-fg-subtle'].flatMap((fg)
 const onFillPairs = [
   ['color-fg-on-brand', 'color-brand-600'],
   ['color-fg-on-brand', 'color-brand-700'],
-  ['color-fg-on-brand', 'color-danger-600'],
-  ['color-fg-on-brand', 'color-danger-700'],
+  ['color-fg-on-danger', 'color-danger-600'],
+  ['color-fg-on-danger', 'color-danger-700'],
+] as const
+// Icon-only success fills (check marks): non-text contrast, WCAG 1.4.11 (3:1).
+const onSuccessGraphicPairs = [
+  ['color-fg-on-success', 'color-success-600'],
+  ['color-fg-on-success', 'color-success-700'],
 ] as const
 
 describe('contrast (WCAG AA, 4.5:1)', () => {
@@ -129,6 +173,12 @@ describe('contrast (WCAG AA, 4.5:1)', () => {
   ] as const) {
     it.each([...textPairs, ...onFillPairs])(`${theme}: %s on %s`, (fg, bg) => {
       expect(contrast(vars, fg, bg)).toBeGreaterThanOrEqual(4.5)
+    })
+    it.each(onSuccessGraphicPairs)(`${theme}: %s on %s (graphics, 3:1)`, (fg, bg) => {
+      expect(contrast(vars, fg, bg)).toBeGreaterThanOrEqual(3)
+    })
+    it(`${theme}: the QR card stays white`, () => {
+      expect(resolve(vars, 'color-qr-surface')).toEqual([1, 1, 1])
     })
   }
 })
