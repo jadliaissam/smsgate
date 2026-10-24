@@ -33,6 +33,17 @@ export function startResendCooldown(seconds = RESEND_COOLDOWN_S) {
   for (const l of listeners) l()
 }
 
+/** Ends the cooldown (sign-in or sign-out: a different session starts). */
+export function clearResendCooldown() {
+  memoryEndsAt = 0
+  try {
+    sessionStorage.removeItem(RESEND_COOLDOWN_KEY)
+  } catch {
+    // storage unavailable: memory was reset
+  }
+  for (const l of listeners) l()
+}
+
 /** Seconds left on the shared cooldown (0 when it can be used), ticking each second. */
 export function useResendCooldown(): number {
   const [endsAt, setEndsAt] = useState(readEndsAt)

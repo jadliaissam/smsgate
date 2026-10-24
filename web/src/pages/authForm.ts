@@ -39,7 +39,10 @@ export function safeNext(next: string | undefined, origin: string = window.locat
     return '/'
   }
   if (url.origin !== origin) return '/'
-  return url.pathname + url.search + url.hash
+  const path = url.pathname + url.search + url.hash
+  // Dot segments can normalise to `//host` (`/.//evil`, `/a/..//evil`),
+  // which a later navigation would read as protocol-relative.
+  return path.startsWith('//') ? '/' : path
 }
 
 /** Inline text link style for auth cards. */

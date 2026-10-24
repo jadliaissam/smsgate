@@ -3,7 +3,7 @@ import { errorCopy } from '../api/errors'
 import { useResendVerification } from '../api/queries'
 import { Button, type ButtonProps } from '../ui/Button'
 import { useToast } from '../ui/Toast'
-import { startResendCooldown, useResendCooldown } from './resendCooldown'
+import { startResendCooldown, useResendCooldown } from '../api/resendCooldown'
 
 interface ResendButtonProps extends Pick<ButtonProps, 'variant' | 'size' | 'className'> {
   label?: string
@@ -25,7 +25,11 @@ export function ResendButton({ label = 'Resend email', ...buttonProps }: ResendB
         startResendCooldown()
         toast.success('Verification email sent', 'Check your inbox for the new link.')
       },
-      onError: (err) => toast.error(errorCopy(isApiError(err) ? err.code : 'default')),
+      onError: (err) => {
+        // Rate limited: the server will refuse for a while anyway.
+        if (isApiError(err, 'rate_limited')) startResendCooldown()
+        toast.error(errorCopy(isApiError(err) ? err.code : 'default'))
+      },
     })
 
   return (

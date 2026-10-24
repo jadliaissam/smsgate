@@ -5,6 +5,7 @@ import { apiError, mockFetch } from '../test/mockFetch'
 import { locationOf, renderApp, verifiedMe } from '../test/renderApp'
 import { errorCopy } from '../api/errors'
 import { devicesKey, meKey } from '../api/queries'
+import { RESEND_COOLDOWN_KEY } from '../api/resendCooldown'
 
 async function fillAndSubmit(email = 'ada@example.com', password = 'correct horse battery') {
   const user = userEvent.setup()
@@ -87,6 +88,19 @@ describe('Login', () => {
         expect.objectContaining({ password: expect.anything() }),
       ),
     )
+  })
+
+  it('clears a resend cooldown left by a previous session on login success', async () => {
+    mockFetch([
+      { method: 'POST', path: '/app/login', status: 204 },
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [] } },
+    ])
+    sessionStorage.setItem(RESEND_COOLDOWN_KEY, String(Date.now() + 50_000))
+    const { router } = renderApp('/login?next=%2Fdevices')
+    await fillAndSubmit()
+    await waitFor(() => expect(locationOf(router)).toBe('/devices'))
+    expect(sessionStorage.getItem(RESEND_COOLDOWN_KEY)).toBeNull()
   })
 
   it('links to sign up', async () => {
