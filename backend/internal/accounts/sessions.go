@@ -40,7 +40,7 @@ func APIKeyID(ctx context.Context) uuid.UUID {
 // (named cookie) with 401 and stores the user id in the context otherwise.
 func RequireSession(q *dbq.Queries, cookie string, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
+		return httpx.RequireJSON(httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
 			c, err := r.Cookie(cookie)
 			if err != nil || c.Value == "" {
 				return httpx.Unauthorized()
@@ -54,7 +54,7 @@ func RequireSession(q *dbq.Queries, cookie string, now func() time.Time) func(ht
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, principal{user: u.ID})))
 			return nil
-		})
+		}))
 	}
 }
 

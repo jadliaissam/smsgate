@@ -82,6 +82,27 @@ func isJSON(ct string) bool {
 	return strings.EqualFold(strings.TrimSpace(ct), "application/json")
 }
 
+var errNotJSON = &Error{http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"}
+
+// RequireJSON rejects unsafe requests (anything but GET/HEAD/OPTIONS) whose
+// Content-Type is not application/json with 415, whether or not they carry a
+// body. Apply it to cookie-authenticated routes so bodyless requests such as
+// logout or DELETE are CSRF-safe too (cross-site requests without a CORS
+// preflight cannot set this header).
+func RequireJSON(next http.Handler) http.Handler {
+	return Handle(func(w http.ResponseWriter, r *http.Request) error {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if !isJSON(r.Header.Get("Content-Type")) {
+				return errNotJSON
+			}
+		}
+		next.ServeHTTP(w, r)
+		return nil
+	})
+}
+
 // Decode reads exactly one JSON value from the body into dst, rejecting a
 // Content-Type other than application/json (415; this also makes cookie
 // authenticated endpoints CSRF-safe, since cross-site requests without a CORS
@@ -89,7 +110,7 @@ func isJSON(ct string) bool {
 // maxBytes.
 func Decode(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
 	if !isJSON(r.Header.Get("Content-Type")) {
-		return &Error{http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"}
+		return errNotJSON
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
 	dec.DisallowUnknownFields()

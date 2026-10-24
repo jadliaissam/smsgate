@@ -62,7 +62,7 @@ KEY="$(jq -r .key <<<"$BODY")"
 [[ -n "$KEY" && "$KEY" != null ]] || fail "no api key returned"
 
 step "pairing code"
-req POST /app/pairing-codes
+req POST /app/pairing-codes "${J[@]}"
 CODE_JSON="$BODY"; expect 201 pairing-code
 PAIR="$(jq -r .code <<<"$CODE_JSON")"
 [[ -n "$PAIR" && "$PAIR" != null ]] || fail "no pairing code"

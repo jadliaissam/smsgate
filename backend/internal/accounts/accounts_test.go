@@ -230,7 +230,7 @@ func TestResendVerification(t *testing.T) {
 		t.Fatalf("resend %d", r.StatusCode)
 	}
 	second := a.Mailer.Last(email)
-	if second == first || a.Mailer.Last(email) == "" {
+	if second == first {
 		t.Fatal("no new email after the interval")
 	}
 	// Old token is gone; new one verifies.
@@ -271,5 +271,42 @@ func TestResendVerificationRateLimitedPerIP(t *testing.T) {
 	// Rate limiter runs before auth, so unauthenticated hits still count.
 	if hit() != 401 || hit() != 401 || hit() != 429 {
 		t.Fatal("expected 401, 401, 429")
+	}
+}
+
+func TestSessionRoutesRequireJSONContentType(t *testing.T) {
+	a := apptest.New(t)
+	c := a.Signup(t, "ct@example.com")
+	ck := cookieHdr(c)
+	// raw sends a request with an explicit Content-Type ("" = none), no body.
+	raw := func(method, path, ct string) int {
+		req, _ := http.NewRequest(method, a.URL+path, nil)
+		req.AddCookie(c)
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := raw("POST", "/app/logout", ""); got != 415 {
+		t.Fatalf("logout without content-type: %d", got)
+	}
+	if got := raw("POST", "/app/resend-verification", ""); got != 415 {
+		t.Fatalf("resend without content-type: %d", got)
+	}
+	_, m := a.Do("POST", "/app/api-keys", map[string]string{"name": "k"}, ck...)
+	id, _ := m["id"].(string)
+	if got := raw("DELETE", "/app/api-keys/"+id, "text/plain"); got != 415 {
+		t.Fatalf("delete with text/plain: %d", got)
+	}
+	if got := raw("GET", "/app/me", ""); got != 200 {
+		t.Fatalf("GET needs no content-type: %d", got)
+	}
+	if got := raw("POST", "/app/logout", "application/json"); got != 204 {
+		t.Fatalf("logout with json and empty body: %d", got)
 	}
 }

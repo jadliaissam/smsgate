@@ -15,6 +15,7 @@ import (
 
 	"github.com/smsgate/backend/internal/config"
 	"github.com/smsgate/backend/internal/db/dbq"
+	"github.com/smsgate/backend/internal/httpx"
 	"github.com/smsgate/backend/internal/secret"
 )
 
@@ -105,7 +106,7 @@ func Routes(mux *http.ServeMux, d Deps) {
 	mux.Handle("POST /app/signup", rl(handle(s.signup)))
 	mux.Handle("POST /app/verify", rl(handle(s.verify)))
 	mux.Handle("POST /app/login", rl(handle(s.login)))
-	mux.Handle("POST /app/logout", handle(s.logout))
+	mux.Handle("POST /app/logout", httpx.RequireJSON(handle(s.logout)))
 	sess := RequireSession(d.Q, d.Cfg.SessionCookie, d.Now)
 	mux.Handle("POST /app/resend-verification", rl(sess(handle(s.resendVerification))))
 	mux.Handle("GET /app/me", sess(handle(s.me)))

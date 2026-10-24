@@ -120,9 +120,7 @@ func (a *App) Do(method, path string, body any, headers ...string) (*http.Respon
 	if err != nil {
 		a.t.Fatalf("new request: %v", err)
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("Content-Type", "application/json")
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Add(headers[i], headers[i+1])
 	}
