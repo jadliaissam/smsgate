@@ -1,8 +1,8 @@
-import { useId, useRef, type ReactNode } from 'react'
+import { use, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cx } from './cx'
 import { XIcon } from './icons'
-import { usePresence, useOverlayBehaviour } from './useOverlay'
+import { OverlayDepth, usePresence, useOverlayBehaviour } from './useOverlay'
 
 export interface DrawerProps {
   open: boolean
@@ -19,11 +19,13 @@ export function Drawer({ open, onClose, title, description, footer, children }: 
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const descId = useId()
-  useOverlayBehaviour(open && mounted, panelRef, onClose)
+  const depth = use(OverlayDepth) + 1
+  useOverlayBehaviour(open && mounted, depth, panelRef, onClose)
 
   if (!mounted) return null
 
   return createPortal(
+    <OverlayDepth value={depth}>
     <div className="fixed inset-0 z-50 flex justify-end">
       <div
         data-testid="drawer-backdrop"
@@ -71,7 +73,8 @@ export function Drawer({ open, onClose, title, description, footer, children }: 
         <div className="flex-1 overflow-y-auto px-6 py-6">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-border px-6 py-4">{footer}</footer>}
       </div>
-    </div>,
+    </div>
+    </OverlayDepth>,
     document.body,
   )
 }

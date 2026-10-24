@@ -34,11 +34,14 @@ function isJSONResponse(res: Response): boolean {
 export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase()
   const safe = method === 'GET' || method === 'HEAD'
-  const headers: Record<string, string> = { Accept: 'application/json', ...init.headers }
+  // Header names are case-insensitive: normalise to lower case so caller
+  // headers merge with (and never duplicate) ours.
+  const headers: Record<string, string> = { accept: 'application/json' }
+  for (const [k, v] of Object.entries(init.headers ?? {})) headers[k.toLowerCase()] = v
   // Backend rule (WR2): every unsafe request carries Content-Type
   // application/json, with or without a body, or it is rejected with 415.
   // This is also what makes the cookie-authenticated API CSRF-safe.
-  if (!safe) headers['Content-Type'] = 'application/json'
+  if (!safe) headers['content-type'] = 'application/json'
 
   let res: Response
   try {

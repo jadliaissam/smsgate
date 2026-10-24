@@ -87,8 +87,8 @@
   --color-border: var(--color-ink-200);
   --color-border-strong: var(--color-ink-300);
   --color-fg: var(--color-ink-950);
-  --color-fg-muted: var(--color-ink-500);
-  --color-fg-subtle: var(--color-ink-400);
+  --color-fg-muted: oklch(0.48 0.021 265);
+  --color-fg-subtle: oklch(0.55 0.02 265);
   --color-fg-on-brand: var(--color-white);
   --color-overlay: oklch(0.2 0.02 265 / 0.4);
 
@@ -213,7 +213,7 @@
     --color-border-strong: oklch(1 0 0 / 0.14);
     --color-fg: var(--color-ink-50);
     --color-fg-muted: var(--color-ink-400);
-    --color-fg-subtle: var(--color-ink-500);
+    --color-fg-subtle: oklch(0.65 0.02 265);
     --color-overlay: oklch(0.08 0.01 265 / 0.6);
 
     --shadow-tint-xs: oklch(0 0 0 / 0.2);

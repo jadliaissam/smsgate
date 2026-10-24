@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { createContext, useEffect, useRef, useState, type RefObject } from 'react'
 
 const FOCUSABLE =
   'a[href],area[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),' +
@@ -28,13 +28,46 @@ export function usePresence(open: boolean, exitMs: number): { mounted: boolean; 
 
 let lockCount = 0
 
+/** Nesting depth of the overlay being rendered (portals keep context). */
+export const OverlayDepth = createContext(0)
+
+interface OverlayEntry {
+  depth: number
+  seq: number
+  panel: HTMLElement
+  restoreTo: HTMLElement | null
+}
+
+// Module-level stack of open overlays: only the topmost handles Esc and Tab.
+// Order is nesting depth first, then opening order (child effects run before
+// parent effects, so depth, not push order, decides for nested overlays).
+const stack: OverlayEntry[] = []
+let seq = 0
+
+function topmost(): OverlayEntry | undefined {
+  let top: OverlayEntry | undefined
+  for (const e of stack) if (!top || e.depth > top.depth || (e.depth === top.depth && e.seq > top.seq)) top = e
+  return top
+}
+
+const focusablesIn = (panel: HTMLElement) => Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+
+// Initial focus: explicit target, else the first control not marked
+// data-focus-skip (e.g. the corner close button), else the panel itself.
+function focusInitial(panel: HTMLElement, explicit?: HTMLElement | null) {
+  const target = explicit ?? focusablesIn(panel).find((el) => !el.hasAttribute('data-focus-skip')) ?? panel
+  target.focus({ preventScroll: true })
+}
+
 /**
  * Modal behaviour for an open overlay panel: focus moves inside on open, Tab
  * is trapped, Escape calls onClose, body scroll is locked, and focus returns
- * to the previously focused element when the overlay closes.
+ * to the previously focused element when the overlay closes. With stacked
+ * overlays only the topmost reacts to the keyboard.
  */
 export function useOverlayBehaviour(
   open: boolean,
+  depth: number,
   panelRef: RefObject<HTMLElement | null>,
   onClose: () => void,
   initialFocusRef?: RefObject<HTMLElement | null>,
@@ -48,24 +81,31 @@ export function useOverlayBehaviour(
     if (!open) return
     const panel = panelRef.current
     if (!panel) return
-    const previouslyFocused = document.activeElement as HTMLElement | null
 
-    const focusables = () => Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+    // A nested overlay that mounted in the same commit already captured the
+    // real trigger; take it over and let the child fall back to this panel.
+    let restoreTo: HTMLElement | null = null
+    for (const e of stack) {
+      if (e.depth > depth) {
+        restoreTo ??= e.restoreTo
+        e.restoreTo = null
+      }
+    }
+    if (!stack.some((e) => e.depth > depth)) restoreTo = document.activeElement as HTMLElement | null
 
-    // Initial focus: explicit target, else the first control that is not
-    // marked data-focus-skip (e.g. the corner close button), else the panel.
-    const first =
-      initialFocusRef?.current ?? focusables().find((el) => !el.hasAttribute('data-focus-skip')) ?? panel
-    first.focus({ preventScroll: true })
+    const entry: OverlayEntry = { depth, seq: ++seq, panel, restoreTo }
+    stack.push(entry)
+    if (topmost() === entry) focusInitial(panel, initialFocusRef?.current)
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (topmost() !== entry) return
       if (e.key === 'Escape') {
         e.stopPropagation()
         onCloseRef.current()
         return
       }
       if (e.key !== 'Tab') return
-      const items = focusables()
+      const items = focusablesIn(panel)
       if (items.length === 0) {
         e.preventDefault()
         panel.focus()
@@ -92,11 +132,14 @@ export function useOverlayBehaviour(
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
+      stack.splice(stack.indexOf(entry), 1)
       if (--lockCount === 0) {
         document.body.style.overflow = ''
         document.body.style.paddingRight = ''
       }
-      if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true })
+      if (entry.restoreTo?.isConnected) entry.restoreTo.focus({ preventScroll: true })
+      const next = topmost()
+      if (next && !next.panel.contains(document.activeElement)) focusInitial(next.panel)
     }
-  }, [open, panelRef, initialFocusRef])
+  }, [open, depth, panelRef, initialFocusRef])
 }

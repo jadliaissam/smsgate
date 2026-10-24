@@ -1,8 +1,8 @@
-import { useId, useRef, type ReactNode, type RefObject } from 'react'
+import { use, useId, useRef, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { cx } from './cx'
 import { XIcon } from './icons'
-import { usePresence, useOverlayBehaviour } from './useOverlay'
+import { OverlayDepth, usePresence, useOverlayBehaviour } from './useOverlay'
 
 export interface ModalProps {
   open: boolean
@@ -37,11 +37,13 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const descId = useId()
-  useOverlayBehaviour(open && mounted, panelRef, onClose, initialFocusRef)
+  const depth = use(OverlayDepth) + 1
+  useOverlayBehaviour(open && mounted, depth, panelRef, onClose, initialFocusRef)
 
   if (!mounted) return null
 
   return createPortal(
+    <OverlayDepth value={depth}>
     <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center sm:p-6">
       <div
         data-testid="modal-backdrop"
@@ -98,7 +100,8 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>,
+    </div>
+    </OverlayDepth>,
     document.body,
   )
 }

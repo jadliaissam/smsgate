@@ -31,7 +31,7 @@ export function Button({
       className={cx(buttonStyles(variant, size), className)}
       {...rest}
     >
-      {loading ? <Spinner size="sm" /> : icon ? <span className="-ml-0.5 text-[1.1em]">{icon}</span> : null}
+      {loading ? <Spinner size="sm" decorative /> : icon ? <span className="-ml-0.5 text-[1.1em]">{icon}</span> : null}
       {children}
     </button>
   )

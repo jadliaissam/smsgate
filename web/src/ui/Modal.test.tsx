@@ -24,7 +24,35 @@ function Harness({ onClose }: { onClose?: () => void }) {
   )
 }
 
+function Nested({ onOuterClose }: { onOuterClose: () => void }) {
+  const [inner, setInner] = useState(true)
+  return (
+    <Modal open onClose={onOuterClose} title="Outer">
+      <button>outer action</button>
+      <Modal open={inner} onClose={() => setInner(false)} title="Inner">
+        <button>inner action</button>
+      </Modal>
+    </Modal>
+  )
+}
+
 describe('Modal', () => {
+  it('with stacked overlays only the topmost handles Escape and Tab', async () => {
+    const onOuterClose = vi.fn()
+    render(<Nested onOuterClose={onOuterClose} />)
+    const inner = screen.getByRole('dialog', { name: 'Inner' })
+    expect(inner.contains(document.activeElement)).toBe(true)
+    for (let i = 0; i < 4; i++) {
+      await userEvent.tab()
+      expect(inner.contains(document.activeElement)).toBe(true)
+    }
+    await userEvent.keyboard('{Escape}')
+    expect(onOuterClose).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Inner' })).not.toBeInTheDocument())
+    await userEvent.keyboard('{Escape}')
+    expect(onOuterClose).toHaveBeenCalledOnce()
+  })
+
   it('renders into a portal as a labelled dialog and moves focus inside', async () => {
     const { container } = render(<Harness />)
     await userEvent.click(screen.getByRole('button', { name: 'Open' }))
