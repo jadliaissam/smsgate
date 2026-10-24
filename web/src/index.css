@@ -90,6 +90,10 @@
   --color-fg-muted: oklch(0.48 0.021 265);
   --color-fg-subtle: oklch(0.55 0.02 265);
   --color-fg-on-brand: var(--color-white);
+  --color-fg-on-danger: var(--color-white);
+  --color-fg-on-success: var(--color-white);
+  /* The pairing QR card is white in both themes so cameras read it. */
+  --color-qr-surface: var(--color-white);
   --color-overlay: oklch(0.2 0.02 265 / 0.4);
 
   /* Typography */

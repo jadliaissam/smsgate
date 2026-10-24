@@ -149,7 +149,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
           className={cx(
             'flex size-11 shrink-0 items-center justify-center rounded-xl text-[22px] inset-ring',
             device.online
-              ? 'bg-linear-to-br from-brand-500 to-brand-700 text-fg-on-brand shadow-glow inset-ring-white/15'
+              ? 'bg-linear-to-br from-brand-500 to-brand-700 text-fg-on-brand shadow-glow inset-ring-fg-on-brand/15'
               : 'bg-surface-sunken text-fg-subtle inset-ring-border',
           )}
         >
