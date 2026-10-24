@@ -5,6 +5,7 @@ Public SMS-gateway service: developers send SMS through an HTTP API, paired Andr
 ## Layout
 
 - `backend/` Go service (module `github.com/smsgate/backend`), Dockerfile and CapRover `captain-definition`
+- `web/` React SPA dashboard (Vite), nginx Dockerfile and CapRover `captain-definition`
 - `scripts/smoke.sh` end-to-end smoke test (bash, curl, jq)
 - `docs/` design spec and implementation plans
 
@@ -126,3 +127,32 @@ CI/CD (`.github/workflows/backend.yml`): every push and pull request touching `b
 - variable `CAPROVER_APP`: the app name, e.g. `smsgate-api`
 
 Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
+
+## Web dashboard deployment
+
+`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `BACKEND_URL` | `http://srv-captain--smsgate-api:8080` | API base URL (CapRover internal address of the API app) |
+| `NGINX_RESOLVER` | `127.0.0.11` | DNS server nginx uses to resolve `BACKEND_URL` at request time (Docker's embedded DNS on CapRover/Swarm), so the web app starts even when the API is not up yet |
+
+Both are substituted into `web/nginx/default.conf.template` at container start; nothing else is substituted, so nginx's own `$variables` are untouched.
+
+CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point), then deploy `web/` as the app root (it contains `captain-definition`), e.g. `cd web && caprover deploy`. Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
+
+Local check against a locally running backend:
+
+```sh
+docker build -t smsgate-web web
+docker run --rm -p 8081:80 -e BACKEND_URL=http://host.docker.internal:8080 \
+  -e NGINX_RESOLVER=<docker dns, e.g. the nameserver in the container's /etc/resolv.conf> smsgate-web
+```
+
+`npm run build` runs `web/scripts/check-bundle.mjs` (postbuild), which fails if the entry JS chunk exceeds 200 KB gzip or the CSS exceeds 40 KB gzip.
+
+CI/CD (`.github/workflows/web.yml`): changes under `web/` run lint, typecheck, tests and build (with the bundle budget) plus a Docker build. A push to `main` deploys `web/` with the CapRover CLI (`production` environment):
+
+- secret `CAPROVER_URL`: the CapRover dashboard URL (shared with the backend workflow)
+- secret `CAPROVER_WEB_APP_TOKEN`: the web app's App Token (Deployment tab)
+- variable `CAPROVER_WEB_APP`: the app name, default `smsgate-web`
