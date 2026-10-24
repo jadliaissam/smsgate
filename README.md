@@ -61,7 +61,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `SESSION_COOKIE_NAME` | `sg_session` | |
 | `COOKIE_SECURE` | `true` (`false` when `APP_ENV=dev`) | |
 | `EMAIL_TOKEN_TTL` | `24h` | verification token validity |
-| `RESEND_VERIFICATION_INTERVAL` | `1m` | min gap between verification emails per user for `POST /app/resend-verification` (extra calls still return 204 but send nothing). The last send time is derived from the newest token's expiry minus `EMAIL_TOKEN_TTL`, so changing `EMAIL_TOKEN_TTL` shifts it for tokens already issued |
+| `RESEND_VERIFICATION_INTERVAL` | `1m` | min gap between verification emails per user for `POST /app/resend-verification` (extra calls still return 204 but send nothing). The last send time is derived from the newest token's expiry minus `EMAIL_TOKEN_TTL`, so after changing `EMAIL_TOKEN_TTL` the send time of already-issued tokens is off by the difference between the old and new TTL (shorter allows early resends, longer can block resends for up to that difference) |
 | `APIKEY_TOUCH_INTERVAL` | `1m` | min interval between `last_used_at` writes |
 | `FCM_CREDENTIALS_JSON` | empty | Firebase service-account JSON as the raw value (convenient on env-only hosts such as CapRover); takes precedence over the file |
 | `FCM_CREDENTIALS_FILE` | empty | path to the service-account JSON file (must be readable by uid 65532, the image's nonroot user). Both empty disables push (noop waker) |
@@ -93,7 +93,7 @@ Dashboard-style calls use a session cookie; the public API uses an API key; devi
     curl -X POST $B/app/verify -H 'Content-Type: application/json' -d '{"token":"<token from link>"}'
     curl -c jar -X POST $B/app/login -H 'Content-Type: application/json' -d '{"email":"me@example.com","password":"correct horse battery"}'
     curl -b jar -X POST $B/app/api-keys -H 'Content-Type: application/json' -d '{"name":"prod"}'   # returns "key" once
-    curl -b jar -X POST $B/app/pairing-codes                                                         # code for the phone
+    curl -b jar -X POST $B/app/pairing-codes -H 'Content-Type: application/json'                         # code for the phone
 
     # the phone registers with the code (device/v1/register) and receives device_id + device_token
 
