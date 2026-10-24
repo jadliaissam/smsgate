@@ -1,4 +1,4 @@
-.PHONY: db-up db-down sqlc test run build
+.PHONY: db-up db-down sqlc test run build web-install web-dev web-test web-build
 
 DEV_DB := postgres://smsgate:smsgate@localhost:5432/smsgate?sslmode=disable
 
@@ -19,3 +19,19 @@ run:
 
 build:
 	cd backend && go build -o ../bin/smsgate ./cmd/smsgate
+
+web/node_modules: web/package.json web/package-lock.json
+	cd web && npm ci
+	@touch $@
+
+web-install: web/node_modules
+
+# Vite dev server; proxies /app /v1 /device /healthz to VITE_API_PROXY (default http://localhost:8080).
+web-dev: web/node_modules
+	cd web && npm run dev
+
+web-test: web/node_modules
+	cd web && npm run lint && npm run typecheck && npm test
+
+web-build: web/node_modules
+	cd web && npm run build
