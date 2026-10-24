@@ -65,9 +65,12 @@ describe('AppShell', () => {
   })
 
   it('verified users see no banner', async () => {
-    mockFetch([{ path: '/app/me', json: verifiedMe }])
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [] } },
+    ])
     renderApp('/devices')
-    await screen.findByText(/coming in the next step/i)
+    await screen.findByRole('heading', { level: 1, name: 'Devices' })
     expect(screen.queryByRole('region', { name: /verify your email/i })).not.toBeInTheDocument()
   })
 })

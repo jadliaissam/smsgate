@@ -17,6 +17,7 @@ describe('Login', () => {
     const m = mockFetch([
       { method: 'POST', path: '/app/login', status: 204 },
       { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [] } },
     ])
     const { router } = renderApp('/login?next=%2Fdevices')
     await fillAndSubmit()
@@ -25,7 +26,7 @@ describe('Login', () => {
     const [call] = m.callsTo('POST', '/app/login')
     expect(call!.headers['content-type']).toBe('application/json')
     expect(call!.body).toEqual({ email: 'ada@example.com', password: 'correct horse battery' })
-    expect(await screen.findByText(/coming in the next step/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Devices' })).toBeInTheDocument()
   })
 
   it('shows mapped copy for invalid credentials and stays on /login', async () => {

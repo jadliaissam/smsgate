@@ -33,9 +33,12 @@ describe('session guard', () => {
   })
 
   it('renders the protected page when the session is valid', async () => {
-    mockFetch([{ path: '/app/me', json: verifiedMe }])
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [] } },
+    ])
     renderApp('/devices')
-    expect(await screen.findByText(/coming in the next step/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Devices' })).toBeInTheDocument()
   })
 
   it('shows a retryable error page when /app/me fails for another reason', async () => {

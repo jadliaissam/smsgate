@@ -8,8 +8,10 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { api, ApiError } from './client'
-import type { ApiKey, Device, Me, Page } from './types'
+import { api, ApiError, isApiError } from './client'
+import { errorCopy } from './errors'
+import type { ApiKey, Device, Me, Page, PairingCode } from './types'
+import { useToast } from '../ui/Toast'
 
 export const meKey = ['me'] as const
 
@@ -131,10 +133,74 @@ export function useResendVerification() {
 export const devicesKey = ['devices'] as const
 export const apiKeysKey = ['api-keys'] as const
 
-export function useDevices() {
+interface DevicesOptions {
+  /** Poll interval in ms (the pair modal polls while open), or false. */
+  refetchInterval?: number | false
+}
+
+export function useDevices({ refetchInterval = false }: DevicesOptions = {}) {
   return useQuery({
     queryKey: devicesKey,
     queryFn: ({ signal }) => api<Page<Device>>('/app/devices', { signal }).then((p) => p.data),
+    refetchInterval,
+  })
+}
+
+// ---- devices ---------------------------------------------------------------
+
+export function useCreatePairingCode() {
+  return useMutation({
+    mutationFn: () => api<PairingCode>('/app/pairing-codes', { method: 'POST' }),
+  })
+}
+
+/** Snapshot the devices list for an optimistic update; returns the rollback. */
+async function optimisticDevices(qc: QueryClient, update: (list: Device[]) => Device[]) {
+  await qc.cancelQueries({ queryKey: devicesKey })
+  const previous = qc.getQueryData<Device[]>(devicesKey)
+  if (previous) qc.setQueryData<Device[]>(devicesKey, update(previous))
+  return { previous }
+}
+
+function codeOf(err: unknown): string {
+  return isApiError(err) ? err.code : 'default'
+}
+
+export interface RenameDeviceInput {
+  id: string
+  name: string
+}
+
+/** PATCH /app/devices/{id}: the new name shows at once, rolled back on error. */
+export function useRenameDevice() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: ({ id, name }: RenameDeviceInput) =>
+      api<Device>(`/app/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } }),
+    onMutate: ({ id, name }) => optimisticDevices(qc, (list) => list.map((d) => (d.id === id ? { ...d, name } : d))),
+    onSuccess: (device) =>
+      qc.setQueryData<Device[]>(devicesKey, (list) => list?.map((d) => (d.id === device.id ? device : d))),
+    onError: (err, _input, ctx) => {
+      if (ctx?.previous) qc.setQueryData(devicesKey, ctx.previous)
+      toast.error('Couldn’t rename the device', errorCopy(codeOf(err)))
+    },
+  })
+}
+
+/** DELETE /app/devices/{id}: the card disappears at once, back on error. */
+export function useRevokeDevice() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (device: Device) => api<undefined>(`/app/devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' }),
+    onMutate: (device) => optimisticDevices(qc, (list) => list.filter((d) => d.id !== device.id)),
+    onSuccess: (_res, device) => toast.success(`${device.name} revoked`, 'The phone was signed out.'),
+    onError: (err, device, ctx) => {
+      if (ctx?.previous) qc.setQueryData(devicesKey, ctx.previous)
+      toast.error(`Couldn’t revoke ${device.name}`, errorCopy(codeOf(err)))
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: devicesKey }),
   })
 }
 
