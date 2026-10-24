@@ -10,7 +10,7 @@ import {
 import { useRouter } from '@tanstack/react-router'
 import { api, ApiError, isApiError } from './client'
 import { errorCopy } from './errors'
-import type { ApiKey, Device, Me, Page, PairingCode } from './types'
+import type { ApiKey, CreatedApiKey, Device, Me, Page, PairingCode } from './types'
 import { useToast } from '../ui/Toast'
 
 export const meKey = ['me'] as const
@@ -211,9 +211,59 @@ export function useRevokeDevice() {
   })
 }
 
+// ---- API keys --------------------------------------------------------------
+
 export function useApiKeys() {
   return useQuery({
     queryKey: apiKeysKey,
     queryFn: ({ signal }) => api<Page<ApiKey>>('/app/api-keys', { signal }).then((p) => p.data),
+  })
+}
+
+/**
+ * POST /app/api-keys. [Review Focus 2] The response is the only place the
+ * full key ever appears: it is never written to the query cache (the list is
+ * refetched instead, which carries the prefix only), and gcTime 0 drops the
+ * settled mutation, response included, once the caller resets it. The caller
+ * keeps the key in component state for as long as it is shown.
+ */
+export function useCreateApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api<CreatedApiKey>('/app/api-keys', { method: 'POST', body: { name } }),
+    gcTime: 0,
+    onSuccess: () => qc.invalidateQueries({ queryKey: apiKeysKey }),
+    // The server says the email is not verified: refresh the session so the
+    // page switches to its unverified state.
+    onError: (err) => {
+      if (isApiError(err, 'email_not_verified')) void qc.invalidateQueries({ queryKey: meKey })
+    },
+  })
+}
+
+/** DELETE /app/api-keys/{id}: marked revoked at once, rolled back on error. */
+export function useRevokeApiKey() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (key: ApiKey) => api<undefined>(`/app/api-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' }),
+    onMutate: async (key) => {
+      await qc.cancelQueries({ queryKey: apiKeysKey })
+      const previous = qc.getQueryData<ApiKey[]>(apiKeysKey)
+      const revokedAt = new Date().toISOString()
+      if (previous) {
+        qc.setQueryData<ApiKey[]>(
+          apiKeysKey,
+          previous.map((k) => (k.id === key.id ? { ...k, revoked_at: revokedAt } : k)),
+        )
+      }
+      return { previous }
+    },
+    onSuccess: (_res, key) => toast.success(`${key.name} revoked`, 'Requests using this key are now rejected.'),
+    onError: (err, key, ctx) => {
+      if (ctx?.previous) qc.setQueryData(apiKeysKey, ctx.previous)
+      toast.error(`Couldn’t revoke ${key.name}`, errorCopy(codeOf(err)))
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: apiKeysKey }),
   })
 }
