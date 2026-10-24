@@ -29,6 +29,8 @@ export const TOAST_DURATION_MS = 4000
 export const ERROR_TOAST_DURATION_MS = 8000
 const EXIT_MS = 160
 const MAX_VISIBLE = 4
+/** A toast live region: stacks its toasts like the container did. */
+const region = 'flex w-full flex-col items-center gap-2 sm:items-end'
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([])
@@ -78,21 +80,31 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [show, dismiss],
   )
 
+  const hasErrors = items.some((t) => t.tone === 'error')
+  const hasPolite = items.some((t) => t.tone !== 'error')
+
   return (
     <ToastContext value={api}>
       {children}
       {createPortal(
         // Two sibling live regions (never nested): errors are announced
         // assertively, everything else politely.
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:right-0 sm:items-end sm:p-6">
-          <section aria-label="Notifications" aria-live="polite" aria-relevant="additions" className="contents">
+        // Real elements, not display:contents: some browsers drop
+        // announcements from live regions that generate no box.
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex flex-col items-center p-4 sm:inset-x-auto sm:right-0 sm:items-end sm:p-6">
+          <section aria-label="Notifications" aria-live="polite" aria-relevant="additions" className={region}>
             {items
               .filter((t) => t.tone !== 'error')
               .map((t) => (
                 <Toast key={t.id} item={t} onDismiss={dismiss} />
               ))}
           </section>
-          <section aria-label="Errors" aria-live="assertive" aria-relevant="additions" className="contents">
+          <section
+            aria-label="Errors"
+            aria-live="assertive"
+            aria-relevant="additions"
+            className={cx(region, hasPolite && hasErrors && 'mt-2')}
+          >
             {items
               .filter((t) => t.tone === 'error')
               .map((t) => (

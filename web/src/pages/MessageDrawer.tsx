@@ -6,6 +6,7 @@ import { Drawer } from '../ui/Drawer'
 import { AlertIcon, CheckIcon, InfoIcon, XIcon } from '../ui/icons'
 import { StatusBadge } from '../ui/StatusBadge'
 import { absoluteTime, sinceTime, useNow } from '../ui/time'
+import type { DeviceName } from './deviceNames'
 
 type StepState = 'done' | 'current' | 'pending' | 'failed' | 'expired'
 
@@ -164,12 +165,12 @@ interface MessageDrawerProps {
   onClose: () => void
   /** Kept while the drawer animates out. */
   message: Message | null
-  deviceName: string | undefined
+  deviceName: DeviceName
 }
 
 /** Details of one message: its status timeline and identifiers. */
 export function MessageDrawer({ open, onClose, message: m, deviceName }: MessageDrawerProps) {
-  const device = deviceName ?? 'a removed device'
+  const device = deviceName === null ? 'a removed device' : (deviceName ?? 'the phone')
   return (
     <Drawer
       open={open}
@@ -197,7 +198,9 @@ export function MessageDrawer({ open, onClose, message: m, deviceName }: Message
                   <CopyButton value={m.id} label="Copy message ID" className="-my-1 shrink-0" />
                 </span>
               </Detail>
-              <Detail label="Device">{deviceName ?? <span className="text-fg-subtle">Removed device</span>}</Detail>
+              <Detail label="Device">
+                {deviceName ?? <span className="text-fg-subtle">{deviceName === null ? 'Removed device' : '—'}</span>}
+              </Detail>
               <Detail label="SIM">{m.sim_slot === null ? 'Phone default' : `SIM ${m.sim_slot + 1}`}</Detail>
               <Detail label="Expires">
                 <time dateTime={m.expires_at}>{absoluteTime(m.expires_at)}</time>

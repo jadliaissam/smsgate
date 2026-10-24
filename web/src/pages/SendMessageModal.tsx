@@ -115,6 +115,8 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
     if (body === '') next.body = errorCopy('body_empty')
     else if (tooLong) next.body = errorCopy('body_too_long')
     setErrors(next)
+    // Only the latest attempt's error decides whether to offer a new message.
+    setAlreadyQueued(false)
     if (next.to || next.body) return
 
     const input: SendMessageInput = { device_id: device.id, to: number, body, ttl_seconds: ttl }
@@ -180,7 +182,7 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
           </div>
           <ResendButton />
         </div>
-      ) : devices.error ? (
+      ) : devices.error && !list ? (
         <FormAlert>{errorCopy(isApiError(devices.error) ? devices.error.code : 'default')}</FormAlert>
       ) : !list ? (
         <div className="flex flex-col gap-3" aria-busy="true" data-testid="send-skeleton">
@@ -238,6 +240,7 @@ export function SendMessageModal({ open, onClose, onSent }: SendMessageModalProp
             label="Expires after"
             hint="If the phone hasn’t sent it by then, it’s dropped and marked expired."
             options={ttlOptions.map((o) => ({ value: o.seconds, label: o.label }))}
+            equal
             value={ttl}
             onChange={setTtl}
             disabled={send.isPending}
@@ -374,23 +377,31 @@ interface SegmentedProps<T> {
   value: T
   onChange: (v: T) => void
   disabled?: boolean
+  /** Equal-width options on a single row (short labels): never wraps. */
+  equal?: boolean
 }
 
 /** A small radio group drawn as a segmented control. */
-function Segmented<T extends string | number | null>({ label, hint, options, value, onChange, disabled }: SegmentedProps<T>) {
+function Segmented<T extends string | number | null>({ label, hint, options, value, onChange, disabled, equal = false }: SegmentedProps<T>) {
   const name = useId()
   const hintId = useId()
   return (
     <fieldset aria-describedby={hint ? hintId : undefined}>
       <legend className="mb-1.5 text-[13px] font-medium text-fg">{label}</legend>
-      <div className="inline-flex max-w-full flex-wrap gap-1 rounded-xl border border-border bg-surface-sunken/70 p-1">
+      <div
+        className={cx(
+          'gap-1 rounded-xl border border-border bg-surface-sunken/70 p-1',
+          equal ? 'grid w-full auto-cols-fr grid-flow-col sm:inline-grid sm:w-auto' : 'inline-flex max-w-full flex-wrap',
+        )}
+      >
         {options.map((o) => {
           const checked = o.value === value
           return (
             <label
               key={String(o.value)}
               className={cx(
-                'flex h-8 cursor-pointer items-center rounded-lg px-3 text-[13px] font-medium whitespace-nowrap',
+                'flex h-8 cursor-pointer items-center rounded-lg text-[13px] font-medium whitespace-nowrap',
+                equal ? 'justify-center px-1.5 sm:px-3' : 'px-3',
                 'transition-[background-color,color,box-shadow] duration-150 ease-out motion-reduce:transition-none',
                 'has-focus-visible:ring-2 has-focus-visible:ring-brand-500/60',
                 checked ? 'bg-surface-raised text-fg shadow-control' : 'text-fg-muted hover:text-fg',

@@ -5,6 +5,7 @@ import { cx, focusRing } from '../ui/cx'
 import { maskNumber, statusLabel } from '../ui/messageStatus'
 import { StatusBadge } from '../ui/StatusBadge'
 import { absoluteTime, sinceTime } from '../ui/time'
+import type { DeviceName } from './deviceNames'
 
 // Status | to | device | created | chevron on md and up; stacked below.
 const columns = 'md:grid-cols-[7.5rem_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)_1rem]'
@@ -46,8 +47,8 @@ export function MessageListHeader({ compact = false }: { compact?: boolean }) {
 
 export interface MessageRowProps {
   message: Message
-  /** The sending device's name; undefined when it is no longer paired. */
-  deviceName: string | undefined
+  /** The sending device's name; null when it is no longer paired, undefined while unknown. */
+  deviceName: DeviceName
   /** Clock for the relative time (pass useNow()). */
   now: number
   /** Makes the row a button (e.g. to open the details drawer). */
@@ -60,7 +61,7 @@ export interface MessageRowProps {
 
 /** One message in a list: status, masked recipient, device, created. Render inside a <ul>. */
 export function MessageRow({ message: m, deviceName, now, onSelect, flash = false, compact = false }: MessageRowProps) {
-  const device = deviceName ?? 'Removed device'
+  const device = deviceName === null ? 'Removed device' : deviceName
   // Once flashed, keep the class: switching back to fade-in would replay it.
   const [flashed, setFlashed] = useState(flash)
   if (flash && !flashed) setFlashed(true)
@@ -74,7 +75,12 @@ export function MessageRow({ message: m, deviceName, now, onSelect, flash = fals
       </div>
       {!compact && (
         <div className={cx('col-start-1 row-start-2 min-w-0 truncate text-sm md:col-auto md:row-auto', deviceName ? 'text-fg' : 'text-fg-subtle')}>
-          {device}
+          {device ?? (
+            <>
+              <span aria-hidden="true">—</span>
+              <span className="sr-only">Device not loaded</span>
+            </>
+          )}
         </div>
       )}
       <div
@@ -113,7 +119,7 @@ export function MessageRow({ message: m, deviceName, now, onSelect, flash = fals
         <button
           type="button"
           onClick={() => onSelect(m)}
-          aria-label={`${statusLabel[m.status]} message to ${m.to}, from ${device}, ${sinceTime(m.created_at, now)}`}
+          aria-label={`${statusLabel[m.status]} message to ${m.to}${device ? `, from ${device}` : ''}, ${sinceTime(m.created_at, now)}`}
           className={cx(
             'group/row',
             layout,

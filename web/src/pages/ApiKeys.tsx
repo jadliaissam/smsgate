@@ -18,6 +18,7 @@ import { EmptyState } from '../ui/EmptyState'
 import { AlertIcon } from '../ui/icons'
 import { Input } from '../ui/Input'
 import { Modal } from '../ui/Modal'
+import { QueryErrorCard } from '../ui/QueryErrorCard'
 import { Skeleton } from '../ui/Skeleton'
 import { absoluteTime, sinceTime, useNow } from '../ui/time'
 
@@ -60,19 +61,13 @@ export function ApiKeys() {
 
       {!verified && <VerifyNotice />}
 
-      {keys.error ? (
-        <Card role="alert" className="flex flex-col items-center py-12 text-center">
-          <span className="mb-4 flex size-11 items-center justify-center rounded-2xl bg-danger-50 text-xl text-danger-600 dark:bg-danger-500/10 dark:text-danger-400">
-            <AlertIcon />
-          </span>
-          <h2 className="text-[15px] font-semibold tracking-tight text-fg">Couldn’t load your API keys</h2>
-          <p className="mt-1.5 max-w-sm text-sm text-pretty text-fg-muted">
-            {errorCopy(isApiError(keys.error) ? keys.error.code : 'default')}
-          </p>
-          <Button variant="secondary" className="mt-6" loading={keys.isFetching} onClick={() => void keys.refetch()}>
-            Retry
-          </Button>
-        </Card>
+      {keys.error && !keys.data ? (
+        <QueryErrorCard
+          title="Couldn’t load your API keys"
+          error={keys.error}
+          retrying={keys.isFetching}
+          onRetry={() => void keys.refetch()}
+        />
       ) : !keys.data ? (
         <KeysSkeleton />
       ) : keys.data.length === 0 ? (

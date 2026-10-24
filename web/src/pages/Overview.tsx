@@ -1,7 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { isApiError } from '../api/client'
-import { errorCopy } from '../api/errors'
 import { useApiKeys, useDevices, useMessages, useStats } from '../api/queries'
 import type { Device, Message, Stats, StatusCounts } from '../api/types'
 import { ArrowRightIcon, BoltIcon, ChevronDownIcon, KeyIcon, MailIcon, MessageIcon, PhoneIcon, SendIcon } from '../layout/icons'
@@ -13,10 +11,12 @@ import { Card } from '../ui/Card'
 import { CopyButton } from '../ui/CopyButton'
 import { buttonStyles, cx, focusRing } from '../ui/cx'
 import { EmptyState } from '../ui/EmptyState'
-import { AlertIcon, CheckCircleIcon, CheckIcon } from '../ui/icons'
+import { CheckCircleIcon, CheckIcon } from '../ui/icons'
 import { messageStatuses, statusFill, statusLabel } from '../ui/messageStatus'
+import { QueryErrorCard } from '../ui/QueryErrorCard'
 import { Skeleton } from '../ui/Skeleton'
 import { useNow } from '../ui/time'
+import { useDeviceNames } from './deviceNames'
 import { MessageListHeader, MessageRow } from './MessageRow'
 
 /** How many messages the Overview lists. */
@@ -162,34 +162,12 @@ export function Overview() {
 type StatsQuery = ReturnType<typeof useStats>
 type DevicesQuery = ReturnType<typeof useDevices>
 
-function LoadError({ title, error, retrying, onRetry, className }: {
-  title: string
-  error: unknown
-  retrying: boolean
-  onRetry: () => void
-  className?: string
-}) {
-  return (
-    <div role="alert" className={cx('flex flex-col items-center text-center', className)}>
-      <span className="mb-3 flex size-10 items-center justify-center rounded-2xl bg-danger-50 text-lg text-danger-600 dark:bg-danger-500/10 dark:text-danger-400">
-        <AlertIcon />
-      </span>
-      <h3 className="text-sm font-semibold tracking-tight text-fg">{title}</h3>
-      <p className="mt-1 max-w-sm text-[13px] text-pretty text-fg-muted">
-        {errorCopy(isApiError(error) ? error.code : 'default')}
-      </p>
-      <Button variant="secondary" size="sm" className="mt-4" loading={retrying} onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  )
-}
-
 function StatCards({ stats, devices }: { stats: StatsQuery; devices: DevicesQuery }) {
   if (stats.error && !stats.data) {
     return (
       <Card className="mb-6">
-        <LoadError
+        <QueryErrorCard
+          variant="inline"
           title="Couldn’t load your usage"
           error={stats.error}
           retrying={stats.isFetching}
@@ -205,7 +183,7 @@ function StatCards({ stats, devices }: { stats: StatsQuery; devices: DevicesQuer
         data-testid="stats-skeleton"
         aria-busy="true"
         aria-label="Loading your usage"
-        className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+        className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2"
       >
         {[0, 1, 2, 3].map((i) => (
           <Card key={i} className="flex flex-col gap-4" padding="sm">
@@ -223,7 +201,7 @@ function StatCards({ stats, devices }: { stats: StatsQuery; devices: DevicesQuer
   }
   const s = stats.data
   return (
-    <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <UsageCard stats={s} />
       <DevicesCard devices={devices} maxDevices={s.plan.max_devices} planName={s.plan.name} />
       <DeliveryCard by={s.last_24h.by_status} />
@@ -267,7 +245,7 @@ function StatCard({ title, icon, iconTone = 'brand', badge, children, footer }: 
           >
             {icon}
           </span>
-          <h2 id={id} className="truncate text-[13px] font-medium text-fg-muted">
+          <h2 id={id} className="text-[13px] leading-5 font-medium text-pretty text-fg-muted">
             {title}
           </h2>
         </div>
@@ -352,7 +330,8 @@ function DevicesCard({ devices, maxDevices, planName }: { devices: DevicesQuery;
     return (
       <StatCard title="Devices" icon={<PhoneIcon />}>
         {devices.error ? (
-          <LoadError
+          <QueryErrorCard
+            variant="inline"
             title="Couldn’t load devices"
             error={devices.error}
             retrying={devices.isFetching}
@@ -448,7 +427,7 @@ function BreakdownCard({ by, total }: { by: StatusCounts; total: number }) {
       title="Last 24 h by status"
       icon={<MessageIcon />}
       badge={
-        <span className="text-xs font-medium text-fg-muted tabular-nums">
+        <span className="shrink-0 text-xs whitespace-nowrap font-medium text-fg-muted tabular-nums">
           {count.format(total)} {total === 1 ? 'message' : 'messages'}
         </span>
       }
@@ -472,9 +451,9 @@ function BreakdownCard({ by, total }: { by: StatusCounts; total: number }) {
       </div>
       <ul aria-label="Status counts, last 24 hours" className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
         {messageStatuses.map((s) => (
-          <li key={s} className={cx('flex items-center gap-2', by[s] === 0 && 'opacity-55')}>
+          <li key={s} className={cx('flex min-w-0 items-center gap-2', by[s] === 0 && 'opacity-55')}>
             <span aria-hidden="true" className={cx('size-2 shrink-0 rounded-full', statusFill[s])} />
-            <span className="truncate text-fg-muted">{statusLabel[s]}</span>
+            <span className="text-fg-muted">{statusLabel[s]}</span>
             <span className="ml-auto font-medium text-fg tabular-nums">{count.format(by[s])}</span>
           </li>
         ))}
@@ -491,12 +470,13 @@ function RecentMessages({ query, rows, devices }: { query: RecentQuery; rows: Me
   const id = useId()
   const navigate = useNavigate()
   const now = useNow(30_000)
-  const names = useMemo(() => new Map(devices?.map((d) => [d.id, d.name])), [devices])
+  const deviceName = useDeviceNames(devices)
 
   let body: ReactNode
   if (query.error && !rows) {
     body = (
-      <LoadError
+      <QueryErrorCard
+        variant="inline"
         title="Couldn’t load recent messages"
         error={query.error}
         retrying={query.isFetching}
@@ -540,7 +520,7 @@ function RecentMessages({ query, rows, devices }: { query: RecentQuery; rows: Me
             <MessageRow
               key={m.id}
               message={m}
-              deviceName={names.get(m.device_id)}
+              deviceName={deviceName(m.device_id)}
               now={now}
               compact
               onSelect={(sel) => void navigate({ to: '/messages', search: { message: sel.id } })}
@@ -554,14 +534,14 @@ function RecentMessages({ query, rows, devices }: { query: RecentQuery; rows: Me
   return (
     <section aria-labelledby={id}>
       <Card padding="none" className="overflow-hidden">
-        <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 md:px-6">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-4 md:px-6">
+          <div className="min-w-0 flex-[1_1_14rem]">
             <h2 id={id} className="text-[15px] font-semibold tracking-tight text-fg">
               Recent messages
             </h2>
             <p className="mt-0.5 text-sm text-fg-muted">The newest {RECENT_LIMIT}, refreshed automatically.</p>
           </div>
-          <Link to="/messages" className={cx(buttonStyles('ghost', 'sm'), 'group/link shrink-0')}>
+          <Link to="/messages" className={cx(buttonStyles('ghost', 'sm'), 'group/link -mx-2.5 shrink-0')}>
             View all
             <ArrowRightIcon className="size-3.5 transition-transform duration-150 motion-safe:group-hover/link:translate-x-0.5 motion-reduce:transition-none" />
           </Link>
@@ -592,31 +572,23 @@ interface ChecklistProps {
 function Checklist({ setup, done, devices, keys }: ChecklistProps) {
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
-  const error = devices.error ?? keys.error
+  // A failed background refetch keeps the data it had: only a list that
+  // never loaded is an error.
+  const devicesFailed = devices.error !== null && !devices.data
+  const keysFailed = keys.error !== null && !keys.data
+  const error = devicesFailed ? devices.error : keysFailed ? keys.error : null
 
   if (error) {
-    const retrying = devices.isFetching || keys.isFetching
     return (
-      <Card role="alert" className="flex flex-col items-center py-12 text-center">
-        <span className="mb-4 flex size-11 items-center justify-center rounded-2xl bg-danger-50 text-xl text-danger-600 dark:bg-danger-500/10 dark:text-danger-400">
-          <AlertIcon />
-        </span>
-        <h2 className="text-[15px] font-semibold tracking-tight text-fg">Couldn’t load your setup</h2>
-        <p className="mt-1.5 max-w-sm text-sm text-pretty text-fg-muted">
-          {errorCopy(isApiError(error) ? error.code : 'default')}
-        </p>
-        <Button
-          variant="secondary"
-          className="mt-6"
-          loading={retrying}
-          onClick={() => {
-            if (devices.isError) void devices.refetch()
-            if (keys.isError) void keys.refetch()
-          }}
-        >
-          Retry
-        </Button>
-      </Card>
+      <QueryErrorCard
+        title="Couldn’t load your setup"
+        error={error}
+        retrying={devices.isFetching || keys.isFetching}
+        onRetry={() => {
+          if (devicesFailed) void devices.refetch()
+          if (keysFailed) void keys.refetch()
+        }}
+      />
     )
   }
 
@@ -631,9 +603,10 @@ function Checklist({ setup, done, devices, keys }: ChecklistProps) {
 
   return (
     <Card padding="none" className="overflow-hidden">
-      <div className={cx('flex items-center gap-4 p-5 sm:p-6', !collapsed && 'border-b border-border')}>
+      <div className={cx('flex flex-wrap items-center gap-x-4 gap-y-3 p-5 sm:p-6', !collapsed && 'border-b border-border')}>
         <ProgressRing done={done} total={SETUP_STEPS} />
-        <div className="min-w-0 flex-1">
+        {/* Grows beside the ring; on narrow screens the toggle wraps below. */}
+        <div className="min-w-0 flex-[1_1_9rem]">
           <h2 className="text-[15px] font-semibold tracking-tight text-fg">
             {complete ? 'Setup complete' : 'Set up your gateway'}
           </h2>
@@ -645,6 +618,7 @@ function Checklist({ setup, done, devices, keys }: ChecklistProps) {
           <Button
             variant="ghost"
             size="sm"
+            className="ml-auto"
             aria-expanded={!collapsed}
             aria-controls={listId}
             onClick={() => setExpanded((v) => !v)}

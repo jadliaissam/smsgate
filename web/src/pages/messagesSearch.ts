@@ -1,4 +1,5 @@
 import type { MessageStatus } from '../api/types'
+import { messageStatuses } from '../ui/messageStatus'
 
 /** URL search params of /messages: the log's filters. */
 export interface MessagesSearch {
@@ -17,7 +18,7 @@ export function isUuid(v: unknown): v is string {
   return typeof v === 'string' && uuid.test(v)
 }
 
-const statuses = new Set<string>(['queued', 'dispatched', 'sent', 'delivered', 'failed', 'expired'])
+const statuses = new Set<string>(messageStatuses)
 
 /** Keeps known statuses, UUID-shaped device/message ids and the send flag; drops anything else. */
 export function validateMessagesSearch(s: Record<string, unknown>): MessagesSearch {

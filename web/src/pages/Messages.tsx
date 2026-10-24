@@ -13,11 +13,12 @@ import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { buttonStyles, cx, focusRing } from '../ui/cx'
 import { EmptyState } from '../ui/EmptyState'
-import { AlertIcon } from '../ui/icons'
 import { messageStatuses, statusFill, statusLabel } from '../ui/messageStatus'
+import { QueryErrorCard } from '../ui/QueryErrorCard'
 import { Skeleton } from '../ui/Skeleton'
 import { useNow } from '../ui/time'
 import { useToast } from '../ui/Toast'
+import { useDeviceNames } from './deviceNames'
 import { MessageDrawer } from './MessageDrawer'
 import { MessageListHeader, MessageRow } from './MessageRow'
 import type { MessagesSearch } from './messagesSearch'
@@ -46,7 +47,7 @@ export function Messages() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<Message | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  const names = useMemo(() => new Map(devices.data?.map((d) => [d.id, d.name])), [devices.data])
+  const deviceName = useDeviceNames(devices.data)
   const rows = useMemo(() => messages.data?.pages.flatMap((p) => p.data) ?? [], [messages.data])
   // Polling refreshes the open message too.
   const selected = rows.find((m) => m.id === selectedId) ?? selectedSnapshot
@@ -134,25 +135,19 @@ export function Messages() {
       />
 
       {messages.error && !messages.data ? (
-        <Card role="alert" className="flex flex-col items-center py-12 text-center">
-          <span className="mb-4 flex size-11 items-center justify-center rounded-2xl bg-danger-50 text-xl text-danger-600 dark:bg-danger-500/10 dark:text-danger-400">
-            <AlertIcon />
-          </span>
-          <h2 className="text-[15px] font-semibold tracking-tight text-fg">Couldn’t load your messages</h2>
-          <p className="mt-1.5 max-w-sm text-sm text-pretty text-fg-muted">
-            {errorCopy(isApiError(messages.error) ? messages.error.code : 'default')}
-          </p>
-          <div className="mt-6 flex flex-wrap justify-center gap-2">
-            <Button variant="secondary" loading={messages.isFetching} onClick={() => void messages.refetch()}>
-              Retry
-            </Button>
-            {filtered && (
+        <QueryErrorCard
+          title="Couldn’t load your messages"
+          error={messages.error}
+          retrying={messages.isFetching}
+          onRetry={() => void messages.refetch()}
+          action={
+            filtered && (
               <Button variant="ghost" onClick={() => setFilters({ status: undefined, device: undefined })}>
                 Clear filters
               </Button>
-            )}
-          </div>
-        </Card>
+            )
+          }
+        />
       ) : !messages.data ? (
         <MessagesSkeleton />
       ) : rows.length === 0 && !messages.isPlaceholderData ? (
@@ -212,7 +207,7 @@ export function Messages() {
                 <MessageRow
                   key={m.id}
                   message={m}
-                  deviceName={names.get(m.device_id)}
+                  deviceName={deviceName(m.device_id)}
                   now={now}
                   onSelect={select}
                   flash={m.id === flashId}
@@ -264,7 +259,7 @@ export function Messages() {
           clearParam('message')
         }}
         message={shown}
-        deviceName={shown ? names.get(shown.device_id) : undefined}
+        deviceName={shown ? deviceName(shown.device_id) : undefined}
       />
     </>
   )
