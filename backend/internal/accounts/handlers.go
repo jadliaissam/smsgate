@@ -172,7 +172,9 @@ func (s *service) me(w http.ResponseWriter, r *http.Request) error {
 // It always answers 204 (nothing here reveals account state beyond the
 // caller's own): verified users and calls within ResendInterval of the last
 // send are no-ops. The last send time is the newest token's expiry minus
-// EmailTokenTTL, so no schema change is needed. The user row is locked for the
+// EmailTokenTTL, so no schema change is needed (caveat: if EMAIL_TOKEN_TTL is
+// changed, tokens issued under the old value yield a shifted send time, at most
+// one interval of drift). The user row is locked for the
 // check-delete-insert so concurrent calls cannot both send.
 func (s *service) resendVerification(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()

@@ -61,7 +61,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `SESSION_COOKIE_NAME` | `sg_session` | |
 | `COOKIE_SECURE` | `true` (`false` when `APP_ENV=dev`) | |
 | `EMAIL_TOKEN_TTL` | `24h` | verification token validity |
-| `RESEND_VERIFICATION_INTERVAL` | `1m` | min gap between verification emails per user for `POST /app/resend-verification` (extra calls still return 204 but send nothing) |
+| `RESEND_VERIFICATION_INTERVAL` | `1m` | min gap between verification emails per user for `POST /app/resend-verification` (extra calls still return 204 but send nothing). The last send time is derived from the newest token's expiry minus `EMAIL_TOKEN_TTL`, so changing `EMAIL_TOKEN_TTL` shifts it for tokens already issued |
 | `APIKEY_TOUCH_INTERVAL` | `1m` | min interval between `last_used_at` writes |
 | `FCM_CREDENTIALS_JSON` | empty | Firebase service-account JSON as the raw value (convenient on env-only hosts such as CapRover); takes precedence over the file |
 | `FCM_CREDENTIALS_FILE` | empty | path to the service-account JSON file (must be readable by uid 65532, the image's nonroot user). Both empty disables push (noop waker) |
