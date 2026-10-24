@@ -95,3 +95,20 @@ export interface Page<T> {
   data: T[]
   next_before?: string | null
 }
+
+/** Message count per status; every status is present (zeros included). */
+export type StatusCounts = Record<MessageStatus, number>
+
+/** GET /app/stats: the user's plan and message counts for two windows. */
+export interface Stats {
+  plan: {
+    id: string
+    name: string
+    monthly_message_quota: number
+    max_devices: number
+  }
+  /** The current calendar month (UTC), the window the quota applies to. */
+  month: { start: string; total: number; by_status: StatusCounts }
+  /** The last 24 hours. */
+  last_24h: { since: string; total: number; by_status: StatusCounts }
+}
