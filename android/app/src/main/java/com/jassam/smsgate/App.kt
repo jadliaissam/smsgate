@@ -10,6 +10,9 @@ import androidx.work.Configuration
  * manifest), so it costs nothing at cold start (D10).
  */
 class App : Application(), Configuration.Provider {
+    /** Lazy singletons (no DI framework); see [AppGraph] and [appGraph]. */
+    val graph: AppGraph by lazy { AppGraph(this) }
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setMinimumLoggingLevel(if (BuildConfig.DEBUG) Log.INFO else Log.ERROR)
