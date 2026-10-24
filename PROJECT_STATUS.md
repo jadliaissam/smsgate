@@ -49,7 +49,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** plan the Android app (item 2 of [What is left](#what-is-left)); email and Firebase are configured. Confirm with the user first.
+**Suggested next step:** start the Android plan at Task A0 (item 2 of [What is left](#what-is-left)), with an implementer and a reviewer per task.
 
 ## Requirements and source documents
 
@@ -313,7 +313,7 @@ The work followed a plan → implement → review loop:
 In rough priority order:
 
 1. **Confirm email end to end:** sign up with a new address and check the verification email arrives.
-2. **Android app:** Kotlin and Jetpack Compose. Pairing, FCM wake, claim, send through the chosen SIM, status reports, and a local journal. It needs its own plan; the device API it talks to already exists.
+2. **Android app:** planned in `docs/superpowers/plans/2026-10-24-android-app.md` (branch `feat/android-app`), decisions confirmed by the user on 2026-10-24: minSdk 23, look and feel generated from the web tokens, JDK 17 + Android SDK installed locally, signed APKs on GitHub Releases, WebSocket "always connected" mode included (backend task A1), online window 20 minutes (`DEVICE_ONLINE_WINDOW=20m` already set in production). Next: Task A0.
 3. **Quota enforcement** (build step 6): plans are seeded but messages per month and device limits are not enforced. Needed before opening to the public.
 4. **Later features from the design:** webhooks, WebSocket transport, Stripe billing, message-body retention purge, APK download and in-app update, a public endpoint exposing limits for the docs page.
 5. **Deferred minor issues:** listed in `.superpowers/sdd/2026-10-23-web-dashboard/progress.md` (the final review triaged them as "later").

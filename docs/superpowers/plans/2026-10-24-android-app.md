@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** draft, 2026-10-24. Decisions marked **(to confirm)** need the user's answer before Task A1 starts.
+**Status:** decisions confirmed by the user on 2026-10-24 (D3 install locally, D4 GitHub Releases, D5 include WebSocket now, D6 20-minute online window). Ready for Task A0. Order: A0 → A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10.
 
 **Goal:** an Android app that pairs a phone with an SMSGate account, wakes on an FCM push, claims a queued message, sends it as a normal SMS from the chosen SIM, and reports `sent` / `delivered` / `failed` back, with at-most-once sending and no SMS ever sent after its validity window.
 
-**Architecture:** single-module Kotlin app (`android/`), Jetpack Compose + Material 3 UI, no DI framework (a small `AppGraph` object). Networking with OkHttp + kotlinx.serialization against the existing device API (`/device/v1/*`). Room holds a local journal of every claimed message. WorkManager runs the claim-and-send job (expedited), status reporting with retries, and the periodic heartbeat/catch-up. Firebase Cloud Messaging only wakes the app; the message body never goes through Google.
+**Architecture:** single-module Kotlin app (`android/`), Jetpack Compose + Material 3 UI, no DI framework (a small `AppGraph` object). Networking with OkHttp (HTTP and WebSocket) + kotlinx.serialization against the device API (`/device/v1/*`). Room holds a local journal of every claimed message. WorkManager runs the claim-and-send job (expedited), status reporting with retries, and the periodic heartbeat/catch-up. Firebase Cloud Messaging only wakes the app; the message body never goes through Google.
 
 **Tech stack:** Kotlin 2.x, AGP + Gradle wrapper (JDK 17), Compose BOM, Material 3, OkHttp 4, kotlinx.serialization, kotlinx.coroutines, Room (KSP), WorkManager, DataStore, Firebase Messaging (BoM), Google code scanner (`play-services-code-scanner`) for the QR. Tests: JUnit, kotlinx-coroutines-test, OkHttp MockWebServer, Robolectric, Room in-memory, `work-testing`.
 
@@ -16,16 +16,16 @@
 
 | # | Decision | Recommendation |
 |---|---|---|
-| D1 | Application id | `com.jassam.smsgate`, fixed by the existing `google-services.json` (Firebase project `smsgate-e5a24`). That file is private and never committed; see Task A1. |
-| D2 | Minimum Android version **(to confirm)** | `minSdk 23` (Android 6.0, over 99 % of active devices; the user asked for broad coverage). 23 is also the floor of the current Firebase BoM, of runtime permissions and of Keystore AES-GCM, so nothing older is worth the extra code paths. `targetSdk`/`compileSdk` = latest stable. Every API newer than 23 is behind a version check with a tested fallback (`SmsManager.createForSubscriptionId` on 31+, `getSmsManagerForSubscriptionId` below; `POST_NOTIFICATIONS` only on 33+; exact `PendingIntent` flags per level). |
-| D3 | Build toolchain **(to confirm)** | Install JDK 17 and the Android command-line tools with Homebrew on this Mac, so agents can build and run unit tests locally. CI builds too. |
-| D4 | Distribution and signing **(to confirm)** | A release keystore generated once, kept outside the repo (backup by the user), its values stored as GitHub secrets. CI builds a signed APK and publishes it as a GitHub Release asset `smsgate.apk` on tags `android-v*`. The web app's nginx redirects `/downloads/smsgate.apk` to `https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk`. |
-| D5 | WebSocket "always connected" mode **(to confirm)** | Deferred to its own plan: the backend has no WebSocket endpoint yet (build step 5). This app is FCM + periodic catch-up only. |
-| D6 | Online status vs heartbeat cadence **(to confirm)** | WorkManager's minimum periodic interval is 15 min, and frequent heartbeats cost battery. The app heartbeats every 15 min and after every push/claim. Set production `DEVICE_ONLINE_WINDOW=20m` (env only, no code change), so an idle healthy phone shows online. |
+| D1 | Application id | `com.jassam.smsgate`, fixed by the existing `google-services.json` (Firebase project `smsgate-e5a24`). That file is private and never committed; see Task A2. |
+| D2 | Minimum Android version | `minSdk 23` (Android 6.0, over 99 % of active devices; the user asked for broad coverage). 23 is also the floor of the current Firebase BoM, of runtime permissions and of Keystore AES-GCM, so nothing older is worth the extra code paths. `targetSdk`/`compileSdk` = latest stable. Every API newer than 23 is behind a version check with a tested fallback (`SmsManager.createForSubscriptionId` on 31+, `getSmsManagerForSubscriptionId` below; `POST_NOTIFICATIONS` only on 33+; exact `PendingIntent` flags per level). |
+| D3 | Build toolchain | Install JDK 17 and the Android command-line tools with Homebrew on this Mac, so agents can build and run unit tests locally. CI builds too. |
+| D4 | Distribution and signing | A release keystore generated once, kept outside the repo (backup by the user), its values stored as GitHub secrets. CI builds a signed APK and publishes it as a GitHub Release asset `smsgate.apk` on tags `android-v*`. The web app's nginx redirects `/downloads/smsgate.apk` to `https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk`. |
+| D5 | WebSocket "always connected" mode | **Included (user decision).** Backend gets `GET /device/v1/ws` (Task A1) with cross-instance wake routing through Postgres `LISTEN/NOTIFY`, as the spec's scaling section describes. The app holds the socket in a foreground service while charging or when "Always connected" is on (Task A7); otherwise FCM + periodic sync. This also gives phones without Play services real-time delivery (D11). |
+| D6 | Online status vs heartbeat cadence | WorkManager's minimum periodic interval is 15 min, and frequent heartbeats cost battery. The app heartbeats every 15 min and after every push/claim. Set production `DEVICE_ONLINE_WINDOW=20m` (env only, no code change), so an idle healthy phone shows online. |
 | D7 | Outcome unknown after a crash | If the app dies between handing the SMS to Android and receiving the sent result, the journal row stays `SENDING`. On restart the app never resends; it reports `failed` with `error_code=outcome_unknown`. A late `sent`/`delivered` is impossible to learn, so the developer sees an honest failure rather than a duplicate code. |
-| D9 | Look and feel (user requirement) | The app matches the web dashboard: same brand, ink, success, warning and danger palettes and the same light/dark semantic roles, generated from `web/src/index.css` (single source of truth, see Task A1), Inter typeface, 16 dp rounded cards with soft layered shadows, the same status colour map (queued neutral, dispatched/sent brand, delivered success, failed danger, expired warning), brand-tinted primary buttons and the same copy tone. Material 3 components themed with these tokens; dynamic colour off. |
-| D10 | Speed and memory (user requirement) | Targets: cold start under 500 ms on a mid-range phone, idle memory under 60 MB PSS, APK under 8 MB. Means: Compose with Baseline Profiles and R8 full mode, no image-loading or DI libraries, no foreground service, Room queries off the main thread with paging for the log, `LazyColumn` with stable keys, startup work deferred with App Startup disabled for unused initializers, Firebase Analytics not included (Messaging only). Checked with Macrobenchmark (startup) and `dumpsys meminfo` in Task A8. |
-| D11 | Phones without Google Play services (Huawei, some Chinese ROMs) | FCM and the Google code scanner need Play services. Without them the app still works: pairing by manual code or login, and delivery through the 15-min periodic sync (slow but functional). The home screen says so plainly. Full real-time support there needs the WebSocket mode (D5). |
+| D9 | Look and feel (user requirement) | The app matches the web dashboard: same brand, ink, success, warning and danger palettes and the same light/dark semantic roles, generated from `web/src/index.css` (single source of truth, see Task A2), Inter typeface, 16 dp rounded cards with soft layered shadows, the same status colour map (queued neutral, dispatched/sent brand, delivered success, failed danger, expired warning), brand-tinted primary buttons and the same copy tone. Material 3 components themed with these tokens; dynamic colour off. |
+| D10 | Speed and memory (user requirement) | Targets: cold start under 500 ms on a mid-range phone, idle memory under 60 MB PSS, APK under 8 MB. Means: Compose with Baseline Profiles and R8 full mode, no image-loading or DI libraries, a foreground service only while always-connected mode is active (Task A7), Room queries off the main thread with paging for the log, `LazyColumn` with stable keys, startup work deferred with App Startup disabled for unused initializers, Firebase Analytics not included (Messaging only). Checked with Macrobenchmark (startup) and `dumpsys meminfo` in Task A10. |
+| D11 | Phones without Google Play services (Huawei, some Chinese ROMs) | FCM and the Google code scanner need Play services. Without them the app still works: pairing by manual code or login, and delivery through the 15-min periodic sync (slow but functional). The home screen says so plainly. With "Always connected" on (D5), they get real-time delivery over the WebSocket instead. |
 | D12 | Aggressive OEM battery managers (Xiaomi, Samsung, Oppo/Vivo, Huawei) | Onboarding detects the manufacturer and shows the specific "allow autostart / don't optimise" steps with a button to the right settings screen where one exists, plus the standard battery-optimisation exemption. |
 | D8 | Token storage | Android `EncryptedSharedPreferences` is deprecated. Store the device token in DataStore, encrypted with an AES-GCM key held in the Android Keystore. |
 
@@ -40,7 +40,7 @@
 - **Every network call** sends `Content-Type: application/json` on unsafe methods and `Authorization: Bearer <device token>`. A `401` from any device call means the device was revoked: wipe local credentials and show the pairing screen.
 - **Configuration:** server URL comes from the QR (`smsgate://pair?server=…&code=…`) or the login screen; default `https://smsgate-web.captain-1.duckdns.org` as a build-config field. Nothing else is hard-coded.
 - **UI (user requirement):** modern and elegant, matching the web dashboard's look and feel (D9): generated colour tokens only (no hard-coded colours in UI code; a unit test scans `ui/` for `Color(0x` literals the way the web tests forbid raw palette classes), Inter, rounded surfaces with soft shadows, light and dark themes following the system with a manual override. Motion is short and snappy (150–250 ms, emphasised-decelerate) and is disabled when the system animator scale is 0. Layouts work from 320 dp wide phones to tablets, in portrait and landscape, with large font scales (up to 200 %) and TalkBack labels on every control.
-- **Performance, memory and battery (user requirement):** the D10 targets. No foreground service, no polling loops; WorkManager only. Nothing heavier than the listed libraries without a recorded ruling.
+- **Performance, memory and battery (user requirement):** the D10 targets. No polling loops. Background work runs through WorkManager; the only foreground service is the always-connected socket (Task A7), active only while charging or when the user turns it on. Nothing heavier than the listed libraries without a recorded ruling.
 - **Tests:** every task lands with unit/Robolectric tests; `./gradlew lint testDebugUnitTest assembleDebug` passes at every commit.
 
 ## Review Focus
@@ -88,7 +88,25 @@ android/
 - [ ] **Step 2:** implement; `make test` → PASS.
 - [ ] **Step 3:** Commit `feat(api): device me and unregister endpoints`.
 
-### Task 1 (A1): Android project scaffold and CI
+### Task 1 (A1): Backend — device WebSocket and wake routing
+
+**Files:** new `backend/internal/realtime/` package (hub, LISTEN/NOTIFY bridge), `backend/internal/push/` (a combined waker), `backend/internal/devices/` (revoke hook), migration for `devices.ws_connected_at`, `web/nginx/*` timeouts, config, README; tests alongside.
+
+**Interfaces:**
+- `GET /device/v1/ws` (device token in `Authorization`, origin not required for device clients). Library: `github.com/coder/websocket` (small, context-based). Server → device frames: `{"type":"new","message_id":"…"}`, `{"type":"revoked"}`. Device → server: `{"type":"ping"}` / heartbeat payload identical to `POST /device/v1/heartbeat` (so a connected phone needs no separate heartbeat). Server replies `{"type":"pong","server_time":"…"}`.
+- One connection per device: a new connection closes the older one (`4001 replaced`).
+- **Wake routing:** message create → `pg_notify('smsgate_wake', '<device_id>:<message_id>')` in the same transaction. Every instance `LISTEN`s on one dedicated connection (reconnect with backoff) and delivers to sockets it holds. FCM is sent only when no instance reports the device as connected (`ws_connected_at` within `WS_STALE_AFTER`), so a connected phone isn't woken twice; the device dedupes by message id anyway.
+- Revoke (dashboard or `unregister`) → `pg_notify('smsgate_revoke', device_id)` → the holding instance sends `revoked` and closes (`4003`), as the spec requires.
+- Device online = recent heartbeat **or** live socket.
+- Env vars (all in config, `.env.example`, README): `WS_PING_TIMEOUT` (default `6m`, close if the client is silent longer), `WS_WRITE_TIMEOUT` (`10s`), `WS_MAX_CONNS` (`10000`), `WS_STALE_AFTER` (`7m`).
+- nginx: `/device/` location gets `proxy_read_timeout 7m` and `proxy_send_timeout 7m` so an idle socket with 5-minute client pings survives. CapRover: enable WebSocket support on `smsgate-web` (controller, with the user's approval).
+- Memory: per-connection state kept minimal (no per-connection goroutine besides the reader; writes through a small buffered channel) so 10k idle sockets stay well inside the 200 MB budget; a test measures allocations per connection.
+
+- [ ] **Step 1: Failing tests:** connect with a valid token → `new` frame arrives when a message is created for that device (same instance); cross-instance delivery through NOTIFY (two hubs on one DB); FCM skipped while connected and used after disconnect; second connection replaces the first; revoke closes the socket with `revoked`; invalid/revoked token → 401 before upgrade; silent client closed after `WS_PING_TIMEOUT` (fake clock); heartbeat over the socket updates the device row.
+- [ ] **Step 2:** implement → `make test` PASS; README + `.env.example`.
+- [ ] **Step 3:** Commit `feat(api): device websocket with cross-instance wake routing`.
+
+### Task 2 (A2): Android project scaffold and CI
 
 **Files:** everything under `android/` except feature code; `.github/workflows/android.yml`; Makefile targets `android-test`, `android-build`; root `.gitignore` additions (`android/**/build`, `local.properties`, `*.jks`, `keystore.properties`).
 
@@ -104,7 +122,7 @@ android/
 - [ ] **Step 2:** CI workflow; actionlint clean.
 - [ ] **Step 3:** Commit `feat(android): project scaffold, theme and CI`.
 
-### Task 2 (A2): Device API client and credential storage
+### Task 3 (A3): Device API client and credential storage
 
 **Files:** `api/*`, `auth/*` + tests.
 
@@ -117,7 +135,7 @@ android/
 - [ ] **Step 2:** implement → PASS.
 - [ ] **Step 3:** Commit `feat(android): device api client and encrypted credentials`.
 
-### Task 3 (A3): Onboarding, permissions and pairing
+### Task 4 (A4): Onboarding, permissions and pairing
 
 **Files:** `ui/onboarding/*`, `ui/pairing/*`, `sim/SimInventory.kt` + tests.
 
@@ -133,7 +151,7 @@ android/
 - [ ] **Step 2:** implement → PASS.
 - [ ] **Step 3:** Commit `feat(android): onboarding, permissions and pairing`.
 
-### Task 4 (A4): Journal and SMS sender
+### Task 5 (A5): Journal and SMS sender
 
 **Files:** `journal/*`, `sms/*` + tests.
 
@@ -147,7 +165,7 @@ android/
 - [ ] **Step 2:** implement → PASS.
 - [ ] **Step 3:** Commit `feat(android): message journal and sms sender`.
 
-### Task 5 (A5): Wake, claim, send, report
+### Task 6 (A6): Wake, claim, send, report
 
 **Files:** `push/SmsGateMessagingService.kt`, `work/*` + tests.
 
@@ -162,21 +180,35 @@ android/
 - [ ] **Step 2:** implement → PASS.
 - [ ] **Step 3:** Commit `feat(android): fcm wake, claim, send and status reporting`.
 
-### Task 6 (A6): Home, log and settings screens
+### Task 7 (A7): Always-connected WebSocket service
+
+**Files:** `realtime/ConnectivityService.kt`, `realtime/SocketClient.kt`, `realtime/ConnectionPolicy.kt` + tests; manifest.
+
+**Interfaces:**
+- `ConnectionPolicy`: connect when (charging) or ("Always connected" setting on); otherwise stay on FCM. Re-evaluated on power changes (registered at runtime by the service and checked by `SyncWorker`, since implicit power broadcasts no longer reach manifest receivers on API 26+).
+- `ConnectivityService`: foreground service with a quiet, low-importance ongoing notification ("SMSGate is connected"). Type `specialUse` on API 34+ (allowed for a sideloaded APK; `dataSync` is capped at 6 h/day on Android 15), plain foreground service below. Started from the app or from `SyncWorker` (allowed because the app is battery-optimisation exempt, D12).
+- `SocketClient` (OkHttp WebSocket): connects to `wss://<server>/device/v1/ws`, sends a heartbeat on connect and a ping every 5 min idle, reconnects with jittered exponential backoff (1 s → 5 min) on failure and on network changes (`ConnectivityManager.NetworkCallback`); on `new` → the same `ProcessMessageWorker` as FCM (deduped by message id); on `revoked` → revoke flow; on connect → catch-up `pending()`.
+- Battery: no wake locks held between frames; the radio sleeps between 5-minute pings.
+
+- [ ] **Step 1: Failing tests:** policy truth table; client against OkHttp `MockWebServer` WebSocket: heartbeat on open, `new` enqueues processing once, duplicate `new` deduped, `revoked` wipes credentials, backoff schedule on repeated failures, reconnect on network change.
+- [ ] **Step 2:** implement → PASS.
+- [ ] **Step 3:** Commit `feat(android): always-connected websocket service`.
+
+### Task 8 (A8): Home, log and settings screens
 
 **Files:** `ui/home/*`, `ui/log/*`, `ui/settings/*` + tests.
 
 **Interfaces:**
 - Home: connection card (paired as name / account email from `me()`, server, last sync, push token OK), SIM cards, today's counts (sent / delivered / failed), permission warnings with fix buttons.
 - Log: journal list newest first (masked number, status chip, time), detail sheet with the timeline; bodies hidden after purge.
-- Settings: device name (local label), default SIM display, "Sync now", "Unpair" (calls `unregister`, then clears local data), app version, open-source licences.
+- Settings: "Always connected" toggle (with a one-line battery note and live connection state), device name (local label), default SIM display, "Sync now", "Unpair" (calls `unregister`, then clears local data), app version, open-source licences.
 - Snappy Material motion (shared-axis transitions), honouring the system animator scale.
 
 - [ ] **Step 1: Failing tests:** view-model tests for home state assembly, log mapping, unpair flow (API 204 → cleared; network error → error shown, nothing cleared).
 - [ ] **Step 2:** implement → PASS.
 - [ ] **Step 3:** Commit `feat(android): home, log and settings`.
 
-### Task 7 (A7): Release pipeline and APK download
+### Task 9 (A9): Release pipeline and APK download
 
 **Files:** `.github/workflows/android.yml` (release job), `web/nginx/default.conf.template` (redirect), `web/src/api/apk.ts` and the Docs APK card, README, PROJECT_STATUS.
 
@@ -191,7 +223,7 @@ android/
 - [ ] **Step 2:** tag a first release, download it from the dashboard link, install on a real phone.
 - [ ] **Step 3:** Commit `feat(android): signed release pipeline and dashboard download`.
 
-### Task 8 (A8): End-to-end verification on a real phone
+### Task 10 (A10): End-to-end verification on a real phone
 
 - [ ] Pair by QR from the live dashboard; device shows online with SIMs and battery.
 - [ ] `curl POST /v1/messages` → SMS arrives on a second phone; dashboard shows `sent` then `delivered`.
@@ -207,4 +239,4 @@ android/
 ---
 
 ## Out of scope
-WebSocket transport and the "always connected" foreground service (D5), inbound SMS, Play Store distribution, in-app self-update (later; GitHub Releases + dashboard link covers updates for now), quotas.
+Inbound SMS, Play Store distribution, in-app self-update (later; GitHub Releases + dashboard link covers updates for now), quotas.
