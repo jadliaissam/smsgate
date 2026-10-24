@@ -14,6 +14,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,12 +45,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
@@ -60,6 +63,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jassam.smsgate.AppGraph
@@ -74,6 +78,7 @@ import com.jassam.smsgate.ui.components.SgCard
 import com.jassam.smsgate.ui.components.SgTextField
 import com.jassam.smsgate.ui.theme.Elevation
 import com.jassam.smsgate.ui.theme.Motion
+import com.jassam.smsgate.ui.theme.Radii
 import com.jassam.smsgate.ui.theme.SmsGateTheme
 import com.jassam.smsgate.ui.theme.Tone
 import com.jassam.smsgate.ui.theme.rememberReducedMotion
@@ -93,11 +98,22 @@ fun PairingScreen(graph: AppGraph, onBack: () -> Unit) {
             defaultName = DeviceName.default(Build.MODEL, fallbackName),
             playServices = PlayServices.available(context),
             normalizeServerUrl = graph::normalizeServerUrl,
+            // A8: Unpair only needs to clear the credential store; this resets the form.
+            pairingStates = graph.credentialStore.state,
         )
     }
     val state by vm.state.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
-    BackHandler(enabled = state.mode != PairingMode.Choose && !state.busy) { vm.setMode(PairingMode.Choose) }
+    // The only back handler of the pairing step: code/login → chooser → checklist.
+    // While a request is in flight back is swallowed (like the disabled back button),
+    // rather than disabled, which would close the app mid-registration.
+    BackHandler {
+        when {
+            state.busy -> Unit
+            state.mode != PairingMode.Choose -> vm.setMode(PairingMode.Choose)
+            else -> onBack()
+        }
+    }
 
     PairingContent(
         state = state,
@@ -112,6 +128,48 @@ fun PairingScreen(graph: AppGraph, onBack: () -> Unit) {
         onSubmit = vm::submit,
         onDismissError = vm::dismissError,
     )
+    state.pendingQr?.let { QrConfirmDialog(it, onConfirm = vm::confirmQr, onCancel = vm::cancelQr) }
+}
+
+/**
+ * "Pair this phone with <host>?" for a scanned QR naming a non-default server.
+ * The host is shown in full (wrapping, never truncated) as OkHttp canonicalised
+ * it, and the full address below it; nothing is sent until Pair is tapped.
+ */
+@Composable
+private fun QrConfirmDialog(pending: PendingQr, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    val colors = SmsGateTheme.colors
+    val title = stringResource(R.string.qr_confirm_title, pending.host)
+    Dialog(onDismissRequest = onCancel) {
+        SgCard(
+            Modifier.widthIn(max = 480.dp).fillMaxWidth().semantics { paneTitle = title },
+            level = Elevation.Raised,
+            contentPadding = PaddingValues(24.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                IconTile(R.drawable.ic_qr, Tone.Brand)
+                Text(title, style = MaterialTheme.typography.headlineSmall, color = colors.fg, modifier = Modifier.semantics { heading() })
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(Radii.Control)
+                        .background(colors.surfaceSunken)
+                        .border(1.dp, colors.border, Radii.Control)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .semantics(mergeDescendants = true) {},
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(stringResource(R.string.qr_confirm_url_label), style = MaterialTheme.typography.labelMedium, color = colors.fgMuted)
+                    Text(pending.serverUrl, style = MaterialTheme.typography.bodyMedium, color = colors.fg)
+                }
+                Text(stringResource(R.string.qr_confirm_note), style = MaterialTheme.typography.bodySmall, color = colors.fgMuted)
+                Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PrimaryButton(stringResource(R.string.qr_confirm_pair), onConfirm, Modifier.fillMaxWidth())
+                    GhostButton(stringResource(R.string.qr_confirm_cancel), onCancel, Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
 }
 
 @Composable

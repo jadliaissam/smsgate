@@ -5,6 +5,8 @@ import android.content.Context
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.tasks.Task
+import com.google.android.gms.tasks.TaskExecutors
+import java.util.concurrent.Executor
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -49,21 +51,41 @@ object PlayServices {
     /**
      * Opens the Google code scanner for QR codes. [onResult] gets the raw text;
      * a user cancel calls nothing; any failure (scanner module not installed
-     * yet, Play services error) calls [onUnavailable]. Listeners are scoped to
-     * [activity], so nothing fires into a destroyed screen.
+     * yet, Play services error) calls [onUnavailable].
+     *
+     * The callbacks must not hold the Activity: the scanner's own activity stops
+     * (and in landscape recreates) ours, so activity-scoped listeners would be
+     * removed in onStop and the result lost. Pass ViewModel methods only; they
+     * run on the main thread through [deliverScan].
      */
     fun scan(activity: Activity, onResult: (String) -> Unit, onUnavailable: () -> Unit) {
         val options = GmsBarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
             .enableAutoZoom()
             .build()
-        try {
+        val task = try {
             GmsBarcodeScanning.getClient(activity, options).startScan()
-                .addOnSuccessListener(activity) { barcode -> onResult(barcode.rawValue.orEmpty()) }
-                .addOnFailureListener(activity) { onUnavailable() }
         } catch (_: RuntimeException) {
             onUnavailable()
+            return
         }
+        deliverScan(task, TaskExecutors.MAIN_THREAD, { it.rawValue }, onResult, onUnavailable)
+    }
+
+    /**
+     * Wires a scan [task] to the callbacks with listeners that are not tied to
+     * any Activity lifecycle. Success → [onResult] (empty text when the code has
+     * none), failure → [onUnavailable], cancel → nothing.
+     */
+    internal fun <T> deliverScan(
+        task: Task<T>,
+        executor: Executor,
+        rawValue: (T) -> String?,
+        onResult: (String) -> Unit,
+        onUnavailable: () -> Unit,
+    ) {
+        task.addOnSuccessListener(executor) { value -> onResult(rawValue(value).orEmpty()) }
+            .addOnFailureListener(executor) { onUnavailable() }
     }
 }
 

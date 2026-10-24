@@ -11,6 +11,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** How the user pairs. Secrets never appear in [toString]. */
 sealed interface PairingMethod {
@@ -62,11 +63,13 @@ object DeviceName {
  *
  * Once the server has answered 201, storing the token and running the hook are
  * not cancellable: the server-side device exists, and leaving the screen must
- * not lose its only token. Never logs the token, code or password.
+ * not lose its only token. If the token cannot be stored, the new device is
+ * unregistered again (best effort). Never logs the token, code or password.
  */
 class Pairer(
     private val normalizeServerUrl: (String) -> String?,
-    private val apiFactory: (String) -> DeviceApi,
+    /** A client for a base URL with the given token source (register needs none). */
+    private val apiFactory: (baseUrl: String, token: suspend () -> String?) -> DeviceApi,
     private val credentials: CredentialStore,
     private val sims: () -> List<Sim>,
     private val fcmToken: suspend () -> String?,
@@ -90,17 +93,32 @@ class Pairer(
             is PairingMethod.Login -> RegisterRequest.withLogin(method.email.trim(), method.password, deviceName, simList, token, version)
         }
 
-        val result = apiFactory(server).register(request)
+        val result = apiFactory(server) { null }.register(request)
         if (result !is ApiResult.Ok) return PairingResult.Failure(PairingError.of(result))
 
+        val registered = result.value
         return withContext(NonCancellable) {
-            try {
-                credentials.save(server, result.value.deviceId, result.value.deviceToken)
+            val stored = try {
+                credentials.save(server, registered.deviceId, registered.deviceToken)
+                true
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: GeneralSecurityException) {
-                warn("could not store credentials: ${e.javaClass.simpleName}")
-                return@withContext PairingResult.Failure(PairingError.StorageFailed)
+                storageFailed(e)
             } catch (e: IOException) {
-                warn("could not store credentials: ${e.javaClass.simpleName}")
+                storageFailed(e)
+            } catch (e: RuntimeException) {
+                // Keystore providers throw ProviderException, IllegalStateException and
+                // friends (KeystoreTokenCipher's retry rethrows them): same outcome.
+                storageFailed(e)
+            }
+            if (!stored) {
+                // The server-side device exists but this phone lost its only token:
+                // revoke it with the in-memory token so no orphan stays on the
+                // dashboard. Best effort, bounded, result ignored.
+                withTimeoutOrNull(ORPHAN_UNREGISTER_TIMEOUT_MS) {
+                    apiFactory(server) { registered.deviceToken }.unregister()
+                }
                 return@withContext PairingResult.Failure(PairingError.StorageFailed)
             }
             try {
@@ -115,7 +133,13 @@ class Pairer(
         }
     }
 
+    private fun storageFailed(e: Exception): Boolean {
+        warn("could not store credentials: ${e.javaClass.simpleName}")
+        return false
+    }
+
     private companion object {
         const val MAX_APP_VERSION = 32
+        const val ORPHAN_UNREGISTER_TIMEOUT_MS = 5_000L
     }
 }

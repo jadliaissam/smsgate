@@ -10,6 +10,10 @@ import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.FakeTokenCipher
 import java.io.File
 import java.security.GeneralSecurityException
+import java.security.ProviderException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,7 +72,7 @@ class PairerTest {
         hook: PostPairingHook = PostPairingHook { hookCalls++ },
     ) = Pairer(
         normalizeServerUrl = { ServerUrl.normalize(it, allowLocalHttp = true) },
-        apiFactory = { DeviceApi(it, { store.deviceToken() }, client) },
+        apiFactory = { url, token -> DeviceApi(url, token, client) },
         credentials = store,
         sims = { sims },
         fcmToken = { fcmCalls++; fcm },
@@ -232,11 +236,56 @@ class PairerTest {
         assertFailure(PairingError.Unknown("invalid_sims"), pairer().pair(code(), "Pixel", true))
     }
 
+    private fun assertOrphanUnregistered() {
+        server.takeRequest() // register
+        val r = server.takeRequest()
+        assertEquals("POST", r.method)
+        assertEquals("/device/v1/unregister", r.url.encodedPath)
+        assertEquals("Bearer dt_secret", r.headers["Authorization"])
+    }
+
     @Test
-    fun storageFailureIsReportedAndNothingIsStored() = runBlocking {
+    fun storageFailureIsReportedNothingStoredAndTheOrphanUnregistered() = runBlocking {
         enqueueCreated()
+        server.enqueue(MockResponse.Builder().code(204).build())
         cipher.onEncrypt = { throw GeneralSecurityException("keystore broken") }
         assertFailure(PairingError.StorageFailed, pairer().pair(code(), "Pixel", true))
+        assertOrphanUnregistered()
+    }
+
+    @Test
+    fun keystoreRuntimeExceptionsAreStorageFailures() = runBlocking {
+        // KeystoreTokenCipher's retry can rethrow provider runtime exceptions.
+        for (e in listOf(ProviderException("keystore busy"), IllegalStateException("key invalidated"))) {
+            enqueueCreated()
+            server.enqueue(MockResponse.Builder().code(204).build())
+            cipher.onEncrypt = { throw e }
+            assertFailure(PairingError.StorageFailed, pairer().pair(code(), "Pixel", true))
+            assertOrphanUnregistered()
+        }
+    }
+
+    @Test
+    fun failedOrphanCleanupStillReportsStorageFailure() = runBlocking {
+        enqueueCreated()
+        enqueueError(500, "internal")
+        cipher.onEncrypt = { throw GeneralSecurityException("keystore broken") }
+        assertFailure(PairingError.StorageFailed, pairer().pair(code(), "Pixel", true))
+        assertOrphanUnregistered()
+    }
+
+    @Test
+    fun tokenIsStoredEvenIfTheCallerIsCancelledAfterThe201() = runBlocking {
+        enqueueCreated()
+        lateinit var job: Job
+        // Fires inside save(), i.e. after the 201 arrived: the caller goes away mid-store.
+        cipher.onEncrypt = { job.cancel() }
+        job = scope.launch(start = CoroutineStart.LAZY) { pairer().pair(code(), "Pixel", true) }
+        job.start()
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(Credentials(base, "0192f0c4-0000-7000-8000-000000000001", "dt_secret"), store.load())
+        assertEquals(1, hookCalls)
     }
 
     @Test

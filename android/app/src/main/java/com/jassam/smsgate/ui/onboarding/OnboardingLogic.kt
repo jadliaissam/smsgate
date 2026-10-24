@@ -4,14 +4,15 @@ package com.jassam.smsgate.ui.onboarding
 enum class ChecklistItem { Sms, PhoneState, Notifications, Battery, OemBattery }
 
 /**
- * Where an item stands. [Denied]: refused but Android will ask again;
- * [Blocked]: refused for good ("don't ask again", or a second refusal on
- * Android 11+), so only the app's settings page can change it.
+ * Where an item stands. [Denied]: refused, Android will ask again. [Blocked]:
+ * probably refused for good ("don't ask again", or a second refusal on Android
+ * 11+). It is a heuristic: dismissing the dialog by tapping outside it on
+ * Android 11+ looks the same, so "Allow" stays available next to app settings.
  */
 enum class ItemStatus { Done, NotAsked, Denied, Blocked }
 
 /** What the item's button does. */
-enum class ItemAction { None, Request, OpenAppSettings, OpenOemSettings }
+enum class ItemAction { None, Request, OpenOemSettings }
 
 /**
  * A runtime permission as Android reports it. [asked] is remembered by the app
@@ -32,7 +33,7 @@ data class OnboardingSnapshot(
 
 /**
  * One rendered row. [settingsLink]: also offer "Open app settings" next to the
- * main button (the item was denied once).
+ * main button (the item was refused at least once).
  */
 data class ChecklistEntry(
     val item: ChecklistItem,
@@ -81,11 +82,8 @@ object OnboardingLogic {
 
     private fun permission(item: ChecklistItem, p: PermissionState, required: Boolean): ChecklistEntry {
         val status = status(p)
-        val action = when (status) {
-            ItemStatus.Done -> ItemAction.None
-            ItemStatus.NotAsked, ItemStatus.Denied -> ItemAction.Request
-            ItemStatus.Blocked -> ItemAction.OpenAppSettings
-        }
-        return ChecklistEntry(item, status, required, action, settingsLink = status == ItemStatus.Denied)
+        val action = if (status == ItemStatus.Done) ItemAction.None else ItemAction.Request
+        val refused = status == ItemStatus.Denied || status == ItemStatus.Blocked
+        return ChecklistEntry(item, status, required, action, settingsLink = refused)
     }
 }

@@ -28,6 +28,12 @@ class OemGuidanceTest {
     }
 
     @Test
+    fun coversOlderSamsungAndPostSplitHonorScreens() {
+        assertTrue(Oem.Samsung.screens.any { it.className == "com.samsung.android.sm.ui.battery.BatteryActivity" })
+        assertTrue(Oem.Huawei.screens.any { it.packageName == "com.hihonor.systemmanager" })
+    }
+
+    @Test
     fun stockAndUnknownPhonesGetNoOemStep() {
         assertNull(OemGuidance.detect("Google", "google"))
         assertNull(OemGuidance.detect("motorola", "motorola"))

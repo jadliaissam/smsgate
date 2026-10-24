@@ -70,9 +70,12 @@ class OnboardingLogicTest {
         assertEquals(ItemAction.Request, phone.action)
         assertTrue(phone.settingsLink)
 
-        // Permanently denied: only app settings can change it.
+        // Probably blocked, but a dismissed dialog looks the same on Android 11+:
+        // keep "Allow" and add the app settings link.
         val notif = list.single { it.item == ChecklistItem.Notifications }
-        assertEquals(ItemAction.OpenAppSettings, notif.action)
+        assertEquals(ItemStatus.Blocked, notif.status)
+        assertEquals(ItemAction.Request, notif.action)
+        assertTrue(notif.settingsLink)
 
         val done = OnboardingLogic.checklist(snapshot(sms = granted)).single { it.item == ChecklistItem.Sms }
         assertEquals(ItemAction.None, done.action)

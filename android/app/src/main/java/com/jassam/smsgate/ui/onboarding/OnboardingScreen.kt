@@ -141,13 +141,7 @@ fun OnboardingScreen(prefs: OnboardingPrefs, oem: Oem?, onContinue: () -> Unit) 
                 ChecklistCard(
                     entry = entry,
                     oem = oem,
-                    onAction = {
-                        when (entry.action) {
-                            ItemAction.Request, ItemAction.OpenOemSettings -> request(entry.item)
-                            ItemAction.OpenAppSettings -> Permissions.openAppSettings(activity)
-                            ItemAction.None -> Unit
-                        }
-                    },
+                    onAction = { if (entry.action != ItemAction.None) request(entry.item) },
                     onAppSettings = { Permissions.openAppSettings(activity) },
                     onMarkDone = {
                         prefs.oemAcknowledged = true
@@ -196,8 +190,8 @@ private fun ChecklistCard(
     val (statusText, tone) = when (entry.status) {
         ItemStatus.Done -> stringResource(if (oemItem) R.string.status_done else R.string.status_allowed) to Tone.Success
         ItemStatus.NotAsked -> stringResource(if (oemItem) R.string.status_recommended else R.string.status_not_set) to Tone.Neutral
-        ItemStatus.Denied -> stringResource(R.string.status_denied) to Tone.Warning
-        ItemStatus.Blocked -> stringResource(R.string.status_blocked) to Tone.Danger
+        // Blocked is a guess (see ItemStatus), so it reads as "Denied" with a settings hint.
+        ItemStatus.Denied, ItemStatus.Blocked -> stringResource(R.string.status_denied) to Tone.Warning
     }
     val reduced = rememberReducedMotion()
     SgCard(
@@ -217,7 +211,8 @@ private fun ChecklistCard(
                     itemVerticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(copy.title, style = MaterialTheme.typography.titleSmall, color = colors.fg)
-                    StatusChip(statusText, tone)
+                    // Announced once, through the row's stateDescription.
+                    StatusChip(statusText, tone, decorative = true)
                     if (entry.required && entry.status != ItemStatus.Done) {
                         StatusChip(stringResource(R.string.onboarding_required), Tone.Brand)
                     }

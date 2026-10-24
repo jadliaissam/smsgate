@@ -39,6 +39,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -163,12 +164,15 @@ private fun SgButton(
     }
 }
 
-/** web Badge with a dot: rounded-full, tinted by [tone]. */
+/**
+ * web Badge with a dot: rounded-full, tinted by [tone]. [decorative] hides it
+ * from TalkBack when the parent already announces the same text (stateDescription).
+ */
 @Composable
-fun StatusChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
+fun StatusChip(text: String, tone: Tone, modifier: Modifier = Modifier, decorative: Boolean = false) {
     val t = toneColors(tone, SmsGateTheme.colors, SmsGateTheme.isDark)
     Row(
-        modifier
+        (if (decorative) modifier.clearAndSetSemantics { } else modifier)
             .clip(Radii.Pill)
             .background(t.container)
             .border(1.dp, t.ring, Radii.Pill)

@@ -1,6 +1,5 @@
 package com.jassam.smsgate.ui.onboarding
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,10 +36,8 @@ fun OnboardingFlow(graph: AppGraph) {
                 prefs.checklistDone = true
                 step = Step.Pairing
             }
-            Step.Pairing -> {
-                BackHandler { step = Step.Checklist }
-                PairingScreen(graph, onBack = { step = Step.Checklist })
-            }
+            // PairingScreen owns back handling for this step (it knows when a request is in flight).
+            Step.Pairing -> PairingScreen(graph, onBack = { step = Step.Checklist })
         }
     }
 }

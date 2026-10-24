@@ -112,4 +112,19 @@ class SimInventoryLegacyTest {
             .setActiveSubscriptionInfos(sub(9, 0, "Orange", number = "+212611111111"))
         assertEquals(listOf(Sim(0, 9, "Orange", "+212611111111")), SimInventory(app).activeSims())
     }
+
+    @Test
+    fun blankNumberIsLeftOut() {
+        shadowOf(app).grantPermissions(Manifest.permission.READ_PHONE_STATE)
+        shadowOf(app.getSystemService(SubscriptionManager::class.java))
+            .setActiveSubscriptionInfos(sub(9, 0, "Orange", number = "  "), sub(4, 1, "inwi"))
+        assertEquals(listOf(Sim(0, 9, "Orange"), Sim(1, 4, "inwi")), SimInventory(app).activeSims())
+    }
+
+    @Test
+    fun emptyWithoutPermission() {
+        shadowOf(app.getSystemService(SubscriptionManager::class.java))
+            .setActiveSubscriptionInfos(sub(9, 0, "Orange", number = "+212611111111"))
+        assertEquals(emptyList<Sim>(), SimInventory(app).activeSims())
+    }
 }

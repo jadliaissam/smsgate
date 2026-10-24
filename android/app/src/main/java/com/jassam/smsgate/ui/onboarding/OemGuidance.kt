@@ -24,6 +24,7 @@ enum class Oem(@StringRes val label: Int, @StringRes val steps: Int, val screens
         listOf(
             OemScreen("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity"),
             OemScreen("com.samsung.android.sm", "com.samsung.android.sm.battery.ui.BatteryActivity"),
+            OemScreen("com.samsung.android.sm", "com.samsung.android.sm.ui.battery.BatteryActivity"), // older One UI
         ),
     ),
     Huawei(
@@ -32,6 +33,9 @@ enum class Oem(@StringRes val label: Int, @StringRes val steps: Int, val screens
         listOf(
             OemScreen("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
             OemScreen("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity"),
+            // Honor after its split from Huawei (MagicOS); best effort, app details is the fallback.
+            OemScreen("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+            OemScreen("com.hihonor.systemmanager", "com.hihonor.systemmanager.optimize.process.ProtectActivity"),
         ),
     ),
     Oppo(

@@ -2,9 +2,13 @@ package com.jassam.smsgate.ui.pairing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.jassam.smsgate.auth.PairingState
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,13 +33,23 @@ data class PairingUiState(
     val error: PairingError? = null,
     val fieldErrors: Map<Field, FieldError> = emptyMap(),
     val paired: Boolean = false,
+    /** A scanned QR for a server other than the built-in default, waiting for the user's OK. */
+    val pendingQr: PendingQr? = null,
 ) {
     val canScan: Boolean get() = playServices
 
     override fun toString(): String =
         "PairingUiState(mode=$mode, deviceName=$deviceName, serverUrl=$serverUrl, code=${if (code.isEmpty()) "" else "***"}, " +
             "email=${if (email.isEmpty()) "" else "***"}, password=${if (password.isEmpty()) "" else "***"}, " +
-            "playServices=$playServices, busy=$busy, error=$error, fieldErrors=$fieldErrors, paired=$paired)"
+            "playServices=$playServices, busy=$busy, error=$error, fieldErrors=$fieldErrors, paired=$paired, pendingQr=$pendingQr)"
+}
+
+/**
+ * A scanned pairing QR awaiting confirmation. [serverUrl] is normalised;
+ * [host] is what the user is asked to trust (see [ServerHost.display]).
+ */
+data class PendingQr(val serverUrl: String, val host: String, val code: String) {
+    override fun toString(): String = "PendingQr(serverUrl=$serverUrl, host=$host, code=***)"
 }
 
 /**
@@ -45,15 +59,34 @@ data class PairingUiState(
  */
 class PairingViewModel(
     private val pairer: Pairer,
+    /** BuildConfig.DEFAULT_SERVER_URL: prefills the form, and the one server a QR may pair with unconfirmed. */
     defaultServerUrl: String,
     defaultName: String,
     playServices: Boolean,
     private val normalizeServerUrl: (String) -> String?,
+    /** The credential store's pairing state; used to start over after an unpair. */
+    pairingStates: Flow<PairingState> = emptyFlow(),
 ) : ViewModel() {
-    private val _state = MutableStateFlow(
-        PairingUiState(deviceName = defaultName, serverUrl = defaultServerUrl, playServices = playServices),
-    )
+    private val officialServer: String? = normalizeServerUrl(defaultServerUrl)
+    private val initial = PairingUiState(deviceName = defaultName, serverUrl = defaultServerUrl, playServices = playServices)
+    private val _state = MutableStateFlow(initial)
     val state: StateFlow<PairingUiState> = _state.asStateFlow()
+
+    init {
+        // This ViewModel is activity-scoped and outlives the paired period. When the
+        // phone is unpaired later (A8's Unpair, or a 401 wipe), start from a clean form
+        // instead of showing the used code and paired = true. Keeps the device name
+        // and server the user chose.
+        viewModelScope.launch {
+            pairingStates.collect { p ->
+                if (p is PairingState.Unpaired) {
+                    _state.update {
+                        if (!it.paired) it else initial.copy(deviceName = it.deviceName, serverUrl = it.serverUrl)
+                    }
+                }
+            }
+        }
+    }
 
     fun setMode(mode: PairingMode) = _state.update {
         if (it.busy) it else it.copy(mode = mode, error = null, fieldErrors = emptyMap())
@@ -70,15 +103,42 @@ class PairingViewModel(
     /** The scanner could not start (no module, Play services error): suggest typing the code. */
     fun onScanUnavailable() = _state.update { it.copy(mode = PairingMode.Code, error = PairingError.ScannerUnavailable) }
 
-    /** A scanned QR: fill the code form from it and pair straight away. */
+    /**
+     * A scanned QR. Nothing is sent yet: a QR naming any server other than the
+     * build-time default ([defaultServerUrl], compared after normalisation) is held
+     * in [PairingUiState.pendingQr] until [confirmQr], because registering sends the
+     * phone's name, SIMs and push token to that server. The default server pairs
+     * straight away. Typed addresses need no confirmation (the user chose them).
+     */
     fun onQrScanned(raw: String) {
         if (_state.value.busy) return
         val link = PairingQr.parse(raw)
-        if (link == null) {
-            _state.update { it.copy(error = PairingError.InvalidQr, fieldErrors = emptyMap()) }
+        val server = link?.let { normalizeServerUrl(it.server) }
+        if (link == null || server == null) {
+            _state.update { it.copy(error = PairingError.InvalidQr, fieldErrors = emptyMap(), pendingQr = null) }
             return
         }
-        _state.update { it.copy(mode = PairingMode.Code, serverUrl = link.server, code = link.code, error = null, fieldErrors = emptyMap()) }
+        if (server == officialServer) {
+            pairWithQr(server, link.code)
+        } else {
+            _state.update { it.copy(pendingQr = PendingQr(server, ServerHost.display(server), link.code), error = null, fieldErrors = emptyMap()) }
+        }
+    }
+
+    /** The user trusts the scanned server: register with it. */
+    fun confirmQr() {
+        val pending = _state.value.pendingQr ?: return
+        pairWithQr(pending.serverUrl, pending.code)
+    }
+
+    /** The user declined the scanned server: forget the QR, send nothing. */
+    fun cancelQr() = _state.update { it.copy(pendingQr = null) }
+
+    private fun pairWithQr(server: String, code: String) {
+        if (_state.value.busy) return
+        _state.update {
+            it.copy(mode = PairingMode.Code, serverUrl = server, code = code, pendingQr = null, error = null, fieldErrors = emptyMap())
+        }
         submit()
     }
 
@@ -99,9 +159,12 @@ class PairingViewModel(
         viewModelScope.launch {
             val result = try {
                 pairer.pair(method, s.deviceName, withPush = s.playServices)
-            } catch (e: Throwable) {
+            } catch (e: CancellationException) {
                 _state.update { it.copy(busy = false) }
                 throw e
+            } catch (e: Exception) {
+                // Never crash the app from viewModelScope: anything unexpected is a generic error.
+                PairingResult.Failure(PairingError.Unknown(e.javaClass.simpleName))
             }
             _state.update {
                 when (result) {

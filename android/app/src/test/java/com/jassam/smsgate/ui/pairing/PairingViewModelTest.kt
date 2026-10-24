@@ -66,12 +66,16 @@ class PairingViewModelTest {
         main.close()
     }
 
-    private fun vm(playServices: Boolean = true, defaultServer: String = base) = PairingViewModel(
+    private fun vm(
+        playServices: Boolean = true,
+        defaultServer: String = base,
+        sims: () -> List<Sim> = { listOf(Sim(0, 3, "Orange")) },
+    ) = PairingViewModel(
         pairer = Pairer(
             normalizeServerUrl = { ServerUrl.normalize(it, allowLocalHttp = true) },
-            apiFactory = { DeviceApi(it, { store.deviceToken() }, DeviceHttp.client("test")) },
+            apiFactory = { url, token -> DeviceApi(url, token, DeviceHttp.client("test")) },
             credentials = store,
-            sims = { listOf(Sim(0, 3, "Orange")) },
+            sims = sims,
             fcmToken = { "fcm-token-1" },
             appVersion = "1.2.3",
             postPairing = PostPairingHook { },
@@ -80,6 +84,7 @@ class PairingViewModelTest {
         defaultName = "Pixel 8",
         playServices = playServices,
         normalizeServerUrl = { ServerUrl.normalize(it, allowLocalHttp = true) },
+        pairingStates = store.state,
     )
 
     private fun enqueueCreated() = server.enqueue(
@@ -197,16 +202,65 @@ class PairingViewModelTest {
         assertNull(vm.state.value.error)
     }
 
+    private fun qr(server: String = base, code: String = "WXYZ6789") =
+        "smsgate://pair?server=" + URLEncoder.encode(server, "UTF-8") + "&code=" + code
+
+    /** Gives a wrongly launched request time to reach the server before counting. */
+    private fun assertNothingSent() {
+        Thread.sleep(300)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test
-    fun scannedQrPairsImmediatelyWithItsServer() {
+    fun qrForAnotherServerWaitsForConfirmThenPairs() {
         enqueueCreated()
         val vm = vm(defaultServer = "https://default.example")
-        val payload = "smsgate://pair?server=" + URLEncoder.encode(base, "UTF-8") + "&code=WXYZ6789"
-        vm.onQrScanned(payload)
+        vm.onQrScanned(qr())
+        val pending = vm.state.value.pendingQr
+        assertEquals(PendingQr(base, "127.0.0.1:${server.port}", "WXYZ6789"), pending)
+        assertFalse(vm.state.value.busy)
+        assertNothingSent()
+
+        vm.confirmQr()
         val s = settled(vm)
         assertTrue(s.paired)
+        assertNull(s.pendingQr)
         assertEquals(base, s.serverUrl)
+        assertEquals(1, server.requestCount)
         assertEquals("WXYZ6789", Json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject["pairing_code"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun cancelledQrSendsNothingAndLeavesTheFormAlone() {
+        val vm = vm(defaultServer = "https://default.example")
+        vm.onQrScanned(qr())
+        vm.cancelQr()
+        val s = vm.state.value
+        assertNull(s.pendingQr)
+        assertEquals(PairingMode.Choose, s.mode)
+        assertEquals("", s.code)
+        assertEquals("https://default.example", s.serverUrl)
+        vm.confirmQr() // nothing pending any more: no-op
+        assertNothingSent()
+    }
+
+    @Test
+    fun qrForTheDefaultServerPairsWithoutConfirmation() {
+        enqueueCreated()
+        val vm = vm(defaultServer = "$base/") // same server once normalised
+        vm.onQrScanned(qr())
+        val s = settled(vm)
+        assertTrue(s.paired)
+        assertNull(s.pendingQr)
+    }
+
+    @Test
+    fun qrWithAnUnacceptableServerIsRejected() {
+        val vm = vm()
+        vm.onQrScanned(qr(server = "http://example.com")) // plain HTTP to a public host
+        assertEquals(PairingError.InvalidQr, settled(vm).error)
+        assertNull(vm.state.value.pendingQr)
+        assertNothingSent()
     }
 
     @Test
@@ -214,7 +268,40 @@ class PairingViewModelTest {
         val vm = vm()
         vm.onQrScanned("https://example.com/hello")
         assertEquals(PairingError.InvalidQr, settled(vm).error)
+        assertNull(vm.state.value.pendingQr)
+        assertNothingSent()
+    }
+
+    @Test
+    fun unexpectedExceptionBecomesAGenericErrorWithoutCrashing() {
+        val vm = vm(sims = { throw IllegalStateException("telephony service died") })
+        vm.setMode(PairingMode.Code)
+        vm.onCodeChange("ABCD2345")
+        vm.submit()
+        val s = settled(vm)
+        assertTrue(s.error is PairingError.Unknown)
+        assertFalse(s.busy)
+        assertFalse(s.paired)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun formStartsOverAfterAnUnpair() {
+        enqueueCreated()
+        val vm = vm()
+        vm.setMode(PairingMode.Code)
+        vm.onNameChange("Office phone")
+        vm.onCodeChange("ABCD2345")
+        vm.submit()
+        assertTrue(settled(vm).paired)
+
+        runBlocking { store.clear() } // what A8's Unpair (or a 401 wipe) does
+        val s = runBlocking { withTimeout(10_000) { vm.state.first { !it.paired } } }
+        assertEquals(PairingMode.Choose, s.mode)
+        assertEquals("", s.code)
+        assertNull(s.error)
+        assertEquals("Office phone", s.deviceName)
+        assertEquals(base, s.serverUrl)
     }
 
     @Test

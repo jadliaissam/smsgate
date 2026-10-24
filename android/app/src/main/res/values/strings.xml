@@ -29,7 +29,6 @@
     <string name="status_allowed">Allowed</string>
     <string name="status_not_set">Not set</string>
     <string name="status_denied">Denied</string>
-    <string name="status_blocked">Blocked</string>
     <string name="status_done">Done</string>
     <string name="status_recommended">Recommended</string>
 
@@ -37,7 +36,7 @@
     <string name="action_open_settings">Open settings</string>
     <string name="action_open_app_settings">Open app settings</string>
     <string name="action_mark_done">Mark as done</string>
-    <string name="item_blocked_hint">Android won’t ask again. Turn it on in the app’s settings.</string>
+    <string name="item_blocked_hint">If Android doesn’t ask again, turn it on in the app’s settings.</string>
 
     <!-- OEM battery guidance (D12) -->
     <string name="oem_xiaomi" translatable="false">Xiaomi</string>
@@ -75,6 +74,13 @@
     <string name="pairing_busy">Pairing…</string>
     <string name="pairing_use_code">Use a pairing code instead</string>
     <string name="pairing_use_login">Log in instead</string>
+
+    <!-- Scanned QR for a server other than the built-in default: confirm before sending anything. -->
+    <string name="qr_confirm_title">Pair this phone with %1$s?</string>
+    <string name="qr_confirm_url_label">Server address</string>
+    <string name="qr_confirm_note">This phone’s name, SIM details and push token will be sent to this server. Continue only if it’s the address of your SMSGate dashboard.</string>
+    <string name="qr_confirm_pair">Pair</string>
+    <string name="qr_confirm_cancel">Cancel</string>
 
     <string name="field_required">This field is required.</string>
     <string name="field_invalid_server">Enter a valid HTTPS address, e.g. https://sms.example.com.</string>

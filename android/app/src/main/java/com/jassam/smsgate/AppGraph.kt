@@ -56,8 +56,11 @@ class AppGraph(context: Context) {
      * A client for [baseUrl] (already normalised). Use this for `register` during
      * pairing; the token comes from the credential store.
      */
-    fun deviceApi(baseUrl: String): DeviceApi =
-        DeviceApi(baseUrl, { credentialStore.deviceToken() }, httpClient, serverClock)
+    fun deviceApi(baseUrl: String): DeviceApi = deviceApi(baseUrl) { credentialStore.deviceToken() }
+
+    /** A client for [baseUrl] with an explicit token source (pairing: register, orphan cleanup). */
+    fun deviceApi(baseUrl: String, token: suspend () -> String?): DeviceApi =
+        DeviceApi(baseUrl, token, httpClient, serverClock)
 
     /** A client for the paired server, or null when unpaired. */
     suspend fun pairedApi(): DeviceApi? = credentialStore.serverUrl()?.let(::deviceApi)
@@ -81,7 +84,7 @@ class AppGraph(context: Context) {
     /** Registers this phone and stores its credentials (pairing screen). */
     fun pairer(): Pairer = Pairer(
         normalizeServerUrl = ::normalizeServerUrl,
-        apiFactory = ::deviceApi,
+        apiFactory = { url, token -> deviceApi(url, token) },
         credentials = credentialStore,
         sims = simInventory::activeSims,
         fcmToken = PlayServices::fcmToken,
