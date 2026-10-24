@@ -5,3 +5,7 @@ bin/
 web/node_modules
 android/build
 .idea
+
+# Firebase service-account keys (secrets): never commit
+/smsgate-e5a24-*.json
+*firebase-adminsdk*.json
