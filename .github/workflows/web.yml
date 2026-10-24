@@ -1,0 +1,87 @@
+name: web
+
+on:
+  push:
+    paths: ["web/**", ".github/workflows/web.yml"]
+  pull_request:
+    paths: ["web/**", ".github/workflows/web.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: lint
+        run: npm run lint
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: test
+        run: npm test
+
+      - name: build (includes bundle budget)
+        run: npm run build
+
+      - name: container image builds
+        run: docker build -t smsgate-web:ci .
+
+  deploy:
+    # Deploys web/ (it contains captain-definition + Dockerfile) to CapRover.
+    # Required repository/environment settings:
+    #   secrets.CAPROVER_URL            e.g. https://captain.example.com
+    #   secrets.CAPROVER_WEB_APP_TOKEN  web app: Deployment -> "Enable App Token"
+    #   vars.CAPROVER_WEB_APP           CapRover app name (default smsgate-web)
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: deploy-production-web
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: build deploy tarball
+        # captain-definition must sit at the tarball root.
+        run: tar -cf deploy.tar -C web --exclude=./node_modules --exclude=./dist .
+
+      - name: deploy to CapRover
+        env:
+          CAPROVER_URL: ${{ secrets.CAPROVER_URL }}
+          CAPROVER_WEB_APP_TOKEN: ${{ secrets.CAPROVER_WEB_APP_TOKEN }}
+          CAPROVER_WEB_APP: ${{ vars.CAPROVER_WEB_APP || 'smsgate-web' }}
+        run: |
+          test -n "$CAPROVER_URL" && test -n "$CAPROVER_WEB_APP_TOKEN" \
+            || { echo "CAPROVER_URL and CAPROVER_WEB_APP_TOKEN (secrets) must be set"; exit 1; }
+          npx --yes caprover@2.4.4 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_WEB_APP_TOKEN" \
+            --appName "$CAPROVER_WEB_APP" \
+            --tarFile ./deploy.tar
