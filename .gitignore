@@ -1,1 +1,7 @@
 .superpowers/
+bin/
+.env
+*.local
+web/node_modules
+android/build
+.idea

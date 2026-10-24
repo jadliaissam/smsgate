@@ -1,0 +1,306 @@
+@import "tailwindcss";
+
+/* Dark mode is class-driven (.dark on <html>), set before first paint by the
+   inline script in index.html and kept in sync by ThemeToggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Only our palette exists: raw Tailwind colors (indigo-500, gray-200, ...)
+     do not generate utilities at all. */
+  --color-*: initial;
+  --color-white: oklch(1 0 0);
+  --color-black: oklch(0 0 0);
+
+  /* Brand: violet-indigo */
+  --color-brand-50: oklch(0.97 0.018 282);
+  --color-brand-100: oklch(0.942 0.037 281);
+  --color-brand-200: oklch(0.89 0.068 280);
+  --color-brand-300: oklch(0.81 0.11 279);
+  --color-brand-400: oklch(0.71 0.163 278);
+  --color-brand-500: oklch(0.62 0.2 278);
+  --color-brand-600: oklch(0.55 0.22 278);
+  --color-brand-700: oklch(0.48 0.205 278);
+  --color-brand-800: oklch(0.41 0.175 278);
+  --color-brand-900: oklch(0.35 0.14 279);
+  --color-brand-950: oklch(0.25 0.1 280);
+
+  /* Ink: cool neutrals for text and surfaces */
+  --color-ink-50: oklch(0.985 0.003 265);
+  --color-ink-100: oklch(0.967 0.005 265);
+  --color-ink-200: oklch(0.925 0.009 265);
+  --color-ink-300: oklch(0.87 0.013 265);
+  --color-ink-400: oklch(0.71 0.018 265);
+  --color-ink-500: oklch(0.54 0.021 265);
+  --color-ink-600: oklch(0.45 0.021 265);
+  --color-ink-700: oklch(0.37 0.02 265);
+  --color-ink-800: oklch(0.28 0.017 265);
+  --color-ink-850: oklch(0.235 0.015 265);
+  --color-ink-900: oklch(0.205 0.014 265);
+  --color-ink-925: oklch(0.175 0.012 265);
+  --color-ink-950: oklch(0.145 0.01 265);
+
+  /* Success: emerald */
+  --color-success-50: oklch(0.979 0.021 166);
+  --color-success-100: oklch(0.95 0.052 163);
+  --color-success-200: oklch(0.905 0.093 164);
+  --color-success-300: oklch(0.845 0.143 165);
+  --color-success-400: oklch(0.765 0.177 163);
+  --color-success-500: oklch(0.696 0.17 162.5);
+  --color-success-600: oklch(0.596 0.145 163);
+  --color-success-700: oklch(0.508 0.118 165.6);
+  --color-success-800: oklch(0.432 0.095 167);
+  --color-success-900: oklch(0.378 0.077 169);
+  --color-success-950: oklch(0.262 0.051 172.5);
+
+  /* Warning: amber */
+  --color-warning-50: oklch(0.987 0.022 95);
+  --color-warning-100: oklch(0.962 0.059 95.6);
+  --color-warning-200: oklch(0.924 0.12 95.7);
+  --color-warning-300: oklch(0.879 0.169 91.6);
+  --color-warning-400: oklch(0.828 0.189 84.4);
+  --color-warning-500: oklch(0.769 0.188 70);
+  --color-warning-600: oklch(0.666 0.179 58.3);
+  --color-warning-700: oklch(0.555 0.163 49);
+  --color-warning-800: oklch(0.473 0.137 46.2);
+  --color-warning-900: oklch(0.414 0.112 45.9);
+  --color-warning-950: oklch(0.279 0.077 45.6);
+
+  /* Danger: rose */
+  --color-danger-50: oklch(0.969 0.015 12.4);
+  --color-danger-100: oklch(0.941 0.03 12.6);
+  --color-danger-200: oklch(0.892 0.058 10);
+  --color-danger-300: oklch(0.81 0.117 11.6);
+  --color-danger-400: oklch(0.712 0.194 13.4);
+  --color-danger-500: oklch(0.645 0.246 16.4);
+  --color-danger-600: oklch(0.586 0.253 17.6);
+  --color-danger-700: oklch(0.514 0.222 16.9);
+  --color-danger-800: oklch(0.455 0.188 13.7);
+  --color-danger-900: oklch(0.41 0.159 10.3);
+  --color-danger-950: oklch(0.271 0.105 12.1);
+
+  /* Semantic aliases (light values; .dark overrides below) */
+  --color-canvas: var(--color-ink-50);
+  --color-surface: var(--color-white);
+  --color-surface-raised: var(--color-white);
+  --color-surface-sunken: var(--color-ink-100);
+  --color-surface-hover: var(--color-ink-100);
+  --color-border: var(--color-ink-200);
+  --color-border-strong: var(--color-ink-300);
+  --color-fg: var(--color-ink-950);
+  --color-fg-muted: oklch(0.48 0.021 265);
+  --color-fg-subtle: oklch(0.55 0.02 265);
+  --color-fg-on-brand: var(--color-white);
+  --color-fg-on-danger: var(--color-white);
+  --color-fg-on-success: var(--color-white);
+  /* The pairing QR card is white in both themes so cameras read it. */
+  --color-qr-surface: var(--color-white);
+  --color-overlay: oklch(0.2 0.02 265 / 0.4);
+
+  /* Typography */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* Depth: layered soft shadows. --shadow-tint and --shadow-highlight switch
+     per theme so the same utilities read well on light and dark surfaces. */
+  --shadow-card:
+    inset 0 1px 0 0 var(--shadow-highlight), 0 1px 2px 0 var(--shadow-tint-sm), 0 1px 3px 0 var(--shadow-tint-xs);
+  --shadow-raised:
+    inset 0 1px 0 0 var(--shadow-highlight), 0 2px 4px -1px var(--shadow-tint-sm), 0 8px 16px -4px var(--shadow-tint-md),
+    0 16px 32px -8px var(--shadow-tint-xs);
+  --shadow-overlay:
+    0 0 0 1px var(--shadow-ring), 0 12px 24px -6px var(--shadow-tint-md), 0 32px 64px -12px var(--shadow-tint-lg);
+  --shadow-glow: 0 0 0 1px oklch(0.62 0.2 278 / 0.25), 0 8px 24px -6px oklch(0.55 0.22 278 / 0.45);
+  --shadow-control: 0 1px 2px 0 var(--shadow-tint-sm);
+
+  /* Motion */
+  --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-fade-in: fade-in 200ms var(--ease-out) both;
+  --animate-fade-out: fade-out 150ms var(--ease-in) both;
+  --animate-pop-in: pop-in 200ms var(--ease-snappy) both;
+  --animate-pop-out: pop-out 150ms var(--ease-in) both;
+  --animate-slide-in-right: slide-in-right 250ms var(--ease-snappy) both;
+  --animate-slide-out-right: slide-out-right 180ms var(--ease-in) both;
+  --animate-toast-in: toast-in 220ms var(--ease-snappy) both;
+  --animate-toast-out: toast-out 160ms var(--ease-in) both;
+  --animate-check: check-draw 250ms var(--ease-out) both;
+  --animate-ping-soft: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-success-pop: success-pop 420ms var(--ease-snappy) both;
+  --animate-glow: glow-breathe 3.2s ease-in-out infinite;
+  --animate-step-in: step-in 280ms var(--ease-snappy) both;
+  --animate-flash: flash 1.8s var(--ease-out) both;
+
+  @keyframes shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.96);
+    }
+  }
+  @keyframes pop-out {
+    to {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+  }
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes slide-out-right {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+  }
+  @keyframes check-draw {
+    from {
+      stroke-dashoffset: 24;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes success-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.3);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.08);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+  @keyframes glow-breathe {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes flash {
+    from {
+      background-color: color-mix(in oklch, var(--color-brand-500) 16%, transparent);
+    }
+  }
+  @keyframes ping-soft {
+    75%,
+    100% {
+      transform: scale(2.2);
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --shadow-tint-xs: oklch(0.25 0.03 265 / 0.04);
+    --shadow-tint-sm: oklch(0.25 0.03 265 / 0.06);
+    --shadow-tint-md: oklch(0.25 0.03 265 / 0.1);
+    --shadow-tint-lg: oklch(0.25 0.03 265 / 0.18);
+    --shadow-highlight: oklch(1 0 0 / 0.7);
+    --shadow-ring: oklch(0.25 0.03 265 / 0.06);
+  }
+
+  .dark {
+    color-scheme: dark;
+    --color-canvas: var(--color-ink-950);
+    --color-surface: var(--color-ink-925);
+    --color-surface-raised: var(--color-ink-900);
+    --color-surface-sunken: oklch(0.12 0.009 265);
+    --color-surface-hover: var(--color-ink-850);
+    --color-border: oklch(1 0 0 / 0.08);
+    --color-border-strong: oklch(1 0 0 / 0.14);
+    --color-fg: var(--color-ink-50);
+    --color-fg-muted: var(--color-ink-400);
+    --color-fg-subtle: oklch(0.65 0.02 265);
+    --color-overlay: oklch(0.08 0.01 265 / 0.6);
+
+    --shadow-tint-xs: oklch(0 0 0 / 0.2);
+    --shadow-tint-sm: oklch(0 0 0 / 0.3);
+    --shadow-tint-md: oklch(0 0 0 / 0.4);
+    --shadow-tint-lg: oklch(0 0 0 / 0.55);
+    --shadow-highlight: oklch(1 0 0 / 0.05);
+    --shadow-ring: oklch(1 0 0 / 0.08);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: oklch(0.62 0.2 278 / 0.25);
+  }
+
+  :focus-visible {
+    outline: none;
+  }
+
+  /* View Transitions (router, W3): a short cross-fade; disabled when the
+     user asks for reduced motion. */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 180ms;
+    animation-timing-function: var(--ease-out);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none !important;
+    }
+  }
+}
