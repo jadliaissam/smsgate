@@ -221,7 +221,7 @@ class PairingViewModelTest {
         assertFalse(vm.state.value.busy)
         assertNothingSent()
 
-        vm.confirmQr()
+        vm.confirmQr(pending!!)
         val s = settled(vm)
         assertTrue(s.paired)
         assertNull(s.pendingQr)
@@ -240,8 +240,20 @@ class PairingViewModelTest {
         assertEquals(PairingMode.Choose, s.mode)
         assertEquals("", s.code)
         assertEquals("https://default.example", s.serverUrl)
-        vm.confirmQr() // nothing pending any more: no-op
+        vm.confirmQr(PendingQr(base, "127.0.0.1:${server.port}", "WXYZ6789")) // nothing pending any more: no-op
         assertNothingSent()
+    }
+
+    @Test
+    fun confirmingAQrThatIsNoLongerTheShownOneDoesNothing() {
+        val vm = vm(defaultServer = "https://default.example")
+        vm.onQrScanned(qr())
+        val shown = vm.state.value.pendingQr!!
+        vm.onQrScanned(qr().replace("WXYZ6789", "ABCD2345")) // a second scan replaces the pending one
+        assertEquals("ABCD2345", vm.state.value.pendingQr!!.code)
+        vm.confirmQr(shown) // the dialog still showed the first
+        assertNothingSent()
+        assertFalse(vm.state.value.busy)
     }
 
     @Test

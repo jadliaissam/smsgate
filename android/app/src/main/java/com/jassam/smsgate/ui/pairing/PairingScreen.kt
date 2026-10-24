@@ -128,7 +128,7 @@ fun PairingScreen(graph: AppGraph, onBack: () -> Unit) {
         onSubmit = vm::submit,
         onDismissError = vm::dismissError,
     )
-    state.pendingQr?.let { QrConfirmDialog(it, onConfirm = vm::confirmQr, onCancel = vm::cancelQr) }
+    state.pendingQr?.let { QrConfirmDialog(it, onConfirm = { shown -> vm.confirmQr(shown) }, onCancel = vm::cancelQr) }
 }
 
 /**
@@ -137,7 +137,7 @@ fun PairingScreen(graph: AppGraph, onBack: () -> Unit) {
  * it, and the full address below it; nothing is sent until Pair is tapped.
  */
 @Composable
-private fun QrConfirmDialog(pending: PendingQr, onConfirm: () -> Unit, onCancel: () -> Unit) {
+private fun QrConfirmDialog(pending: PendingQr, onConfirm: (PendingQr) -> Unit, onCancel: () -> Unit) {
     val colors = SmsGateTheme.colors
     val title = stringResource(R.string.qr_confirm_title, pending.host)
     Dialog(onDismissRequest = onCancel) {
@@ -146,7 +146,8 @@ private fun QrConfirmDialog(pending: PendingQr, onConfirm: () -> Unit, onCancel:
             level = Elevation.Raised,
             contentPadding = PaddingValues(24.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            // Scrolls so a long host or a large font never pushes the buttons off a small screen.
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 IconTile(R.drawable.ic_qr, Tone.Brand)
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = colors.fg, modifier = Modifier.semantics { heading() })
                 Column(
@@ -164,7 +165,7 @@ private fun QrConfirmDialog(pending: PendingQr, onConfirm: () -> Unit, onCancel:
                 }
                 Text(stringResource(R.string.qr_confirm_note), style = MaterialTheme.typography.bodySmall, color = colors.fgMuted)
                 Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    PrimaryButton(stringResource(R.string.qr_confirm_pair), onConfirm, Modifier.fillMaxWidth())
+                    PrimaryButton(stringResource(R.string.qr_confirm_pair), { onConfirm(pending) }, Modifier.fillMaxWidth())
                     GhostButton(stringResource(R.string.qr_confirm_cancel), onCancel, Modifier.fillMaxWidth())
                 }
             }

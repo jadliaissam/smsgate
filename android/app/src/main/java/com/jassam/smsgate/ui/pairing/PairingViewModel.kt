@@ -125,9 +125,13 @@ class PairingViewModel(
         }
     }
 
-    /** The user trusts the scanned server: register with it. */
-    fun confirmQr() {
+    /**
+     * The user trusts the scanned server: register with it. [shown] is the QR the
+     * dialog displayed; if another scan replaced it meanwhile, nothing happens.
+     */
+    fun confirmQr(shown: PendingQr) {
         val pending = _state.value.pendingQr ?: return
+        if (pending != shown) return
         pairWithQr(pending.serverUrl, pending.code)
     }
 
