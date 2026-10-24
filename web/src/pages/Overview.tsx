@@ -270,7 +270,7 @@ function StepMarker({ index, done, icon }: { index: number; done: boolean; icon:
   )
 }
 
-function StepLink({ to, label, primary }: { to: '/devices' | '/api-keys'; label: string; primary: boolean }) {
+function StepLink({ to, label, primary }: { to: '/devices' | '/api-keys' | '/messages'; label: string; primary: boolean }) {
   return (
     <Link to={to} className={cx(buttonStyles(primary ? 'primary' : 'secondary', 'sm'), 'group/link')}>
       {label}
@@ -288,6 +288,7 @@ function SendStep({ deviceId }: { deviceId: string | undefined }) {
       icon={<SendIcon />}
       title="Send your first SMS"
       description="One HTTP call with your API key. Replace the number with your own to try it."
+      action={<StepLink to="/messages" primary={false} label="Send a test" />}
     >
       <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-sunken">
         <div className="flex items-center justify-between border-b border-border py-1 pr-1.5 pl-4">

@@ -127,6 +127,8 @@
   --animate-ping-soft: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-success-pop: success-pop 420ms var(--ease-snappy) both;
   --animate-glow: glow-breathe 3.2s ease-in-out infinite;
+  --animate-step-in: step-in 280ms var(--ease-snappy) both;
+  --animate-flash: flash 1.8s var(--ease-out) both;
 
   @keyframes shimmer {
     from {
@@ -208,6 +210,17 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes flash {
+    from {
+      background-color: color-mix(in oklch, var(--color-brand-500) 16%, transparent);
     }
   }
   @keyframes ping-soft {

@@ -1,17 +1,32 @@
 import {
+  keepPreviousData,
   MutationCache,
   QueryCache,
   QueryClient,
   queryOptions,
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
 } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { api, ApiError, apiResponse, isApiError } from './client'
 import { errorCopy } from './errors'
 import { clearResendCooldown } from './resendCooldown'
-import type { ApiKey, CreatedApiKey, Device, IssuedPairingCode, Me, Page, PairingCode } from './types'
+import {
+  terminalStatuses,
+  type ApiKey,
+  type CreatedApiKey,
+  type Device,
+  type IssuedPairingCode,
+  type Me,
+  type Message,
+  type MessageStatus,
+  type Page,
+  type PairingCode,
+  type SendMessageInput,
+} from './types'
 import { useToast } from '../ui/Toast'
 
 export const meKey = ['me'] as const
@@ -287,5 +302,99 @@ export function useRevokeApiKey() {
       toast.error(`Couldn’t revoke ${key.name}`, errorCopy(codeOf(err)))
     },
     onSettled: () => qc.invalidateQueries({ queryKey: apiKeysKey }),
+  })
+}
+
+// ---- messages --------------------------------------------------------------
+
+export const messagesKey = ['messages'] as const
+
+export interface MessageFilters {
+  status?: MessageStatus
+  deviceId?: string
+}
+
+/** Page size of the messages log (the backend default). */
+export const MESSAGES_PAGE_SIZE = 50
+/** Poll interval while any listed message can still change status. */
+export const MESSAGES_POLL_MS = 5000
+
+/** GET /app/messages URL; `before` is the previous page's `next_before`. */
+export function messagesPath(filters: MessageFilters, limit: number, before?: string): string {
+  const q = new URLSearchParams({ limit: String(limit) })
+  if (filters.status) q.set('status', filters.status)
+  if (filters.deviceId) q.set('device_id', filters.deviceId)
+  if (before) q.set('before', before)
+  return `/app/messages?${q}`
+}
+
+type MessagesData = InfiniteData<Page<Message>, string | undefined>
+
+interface MessagesListKey {
+  status?: MessageStatus
+  deviceId?: string
+  limit: number
+}
+
+function listKey(k: MessagesListKey) {
+  return [...messagesKey, 'list', k] as const
+}
+
+function hasPending(data: MessagesData | undefined): boolean {
+  return !!data?.pages.some((p) => p.data.some((m) => !terminalStatuses.includes(m.status)))
+}
+
+/**
+ * The messages log, newest first, paged with keyset cursors (`next_before`).
+ * Polls every 5 s while any loaded message is not yet delivered, failed or
+ * expired. Switching filters keeps the previous list on screen until the new
+ * one arrives.
+ */
+export function useMessages(filters: MessageFilters = {}, { limit = MESSAGES_PAGE_SIZE } = {}) {
+  const key: MessagesListKey = { status: filters.status, deviceId: filters.deviceId, limit }
+  return useInfiniteQuery({
+    queryKey: listKey(key),
+    queryFn: ({ pageParam, signal }) => api<Page<Message>>(messagesPath(filters, limit, pageParam), { signal }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_before ?? undefined,
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => (hasPending(q.state.data) ? MESSAGES_POLL_MS : false),
+  })
+}
+
+export interface SendMessageVars {
+  input: SendMessageInput
+  /** One per form opening, so a retry after a lost response is not sent twice. */
+  idempotencyKey: string
+}
+
+/**
+ * POST /app/messages. On success the new message is put at the top of every
+ * cached list it belongs to (it shows at once), then the lists refetch.
+ */
+export function useSendMessage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ input, idempotencyKey }: SendMessageVars) =>
+      api<Message>('/app/messages', { method: 'POST', body: input, headers: { 'Idempotency-Key': idempotencyKey } }),
+    onSuccess: (msg) => {
+      for (const [queryKey, data] of qc.getQueriesData<MessagesData>({ queryKey: [...messagesKey, 'list'] })) {
+        const k = queryKey[2] as MessagesListKey | undefined
+        if (!data || !k) continue
+        if ((k.status && k.status !== msg.status) || (k.deviceId && k.deviceId !== msg.device_id)) continue
+        if (data.pages.some((p) => p.data.some((m) => m.id === msg.id))) continue // idempotent replay
+        const [first, ...rest] = data.pages
+        if (!first) continue
+        qc.setQueryData<MessagesData>(queryKey, {
+          ...data,
+          pages: [{ ...first, data: [msg, ...first.data] }, ...rest],
+        })
+      }
+      void qc.invalidateQueries({ queryKey: messagesKey })
+    },
+    onError: (err) => {
+      if (isApiError(err, 'email_not_verified')) void qc.invalidateQueries({ queryKey: meKey })
+      if (isApiError(err, 'device_not_found')) void qc.invalidateQueries({ queryKey: devicesKey })
+    },
   })
 }

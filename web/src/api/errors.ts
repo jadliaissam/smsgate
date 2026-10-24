@@ -32,6 +32,7 @@ const copy: Record<string, string> = {
   invalid_limit: 'Couldn’t load this list. Refresh and try again.',
   invalid_status: 'That status filter isn’t valid. Clear the filter and try again.',
   invalid_since: 'That date filter isn’t valid. Clear the filter and try again.',
+  invalid_device_id: 'That device filter isn’t valid. Clear the filter and try again.',
 
   // transport & limits
   rate_limited: 'Too many attempts. Wait a moment and try again.',

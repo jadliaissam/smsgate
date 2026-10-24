@@ -12,6 +12,7 @@ import { createQueryClient, isUnauthorized, meQuery } from './api/queries'
 import { AuthLayout } from './layout/AuthLayout'
 import { ErrorPanel, PagePending, SessionError, SplashScreen } from './layout/RouteStates'
 import { NotFound } from './pages/NotFound'
+import { validateMessagesSearch } from './pages/messagesSearch'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -101,6 +102,13 @@ const devicesRoute = createRoute({
   component: lazyRouteComponent(() => import('./pages/Devices'), 'Devices'),
 })
 
+const messagesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/messages',
+  validateSearch: validateMessagesSearch,
+  component: lazyRouteComponent(() => import('./pages/Messages'), 'Messages'),
+})
+
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/api-keys',
@@ -109,7 +117,7 @@ const apiKeysRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   authRoute.addChildren([loginRoute, signupRoute, verifyRoute]),
-  appRoute.addChildren([overviewRoute, devicesRoute, apiKeysRoute]),
+  appRoute.addChildren([overviewRoute, devicesRoute, messagesRoute, apiKeysRoute]),
 ])
 
 function createAppRouter(queryClient: QueryClient, history: RouterHistory) {
