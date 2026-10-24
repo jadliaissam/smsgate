@@ -185,7 +185,7 @@ smsgate/
 
 **Stack:** Go 1.26, standard library `net/http` router, pgx/v5 with a connection pool, sqlc for typed queries, goose migrations embedded in the binary, `log/slog` JSON logs. FCM is called directly over its HTTP v1 API, without the Firebase SDK. Passwords use argon2id.
 
-**Image:** multi-stage build to a distroless static image running as nonroot, with `GOMEMLIMIT=96MiB`. The binary has a `-healthcheck` flag for the container health check.
+**Image:** multi-stage build to a distroless static image running as nonroot, with `GOMEMLIMIT=160MiB` (raised from 96 MiB for device WebSockets). The binary has a `-healthcheck` flag for the container health check.
 
 **Packages** (`backend/internal/`):
 
@@ -322,12 +322,12 @@ The work followed a plan → implement → review loop:
 
 In order. Items 1 to 4 are on `feat/android-app`; merge it to `main` only after item 3, because merging deploys the backend WebSocket.
 
-1. **Android A1 (done).** Reviewed twice; fixes: wake bursts queue instead of dropping the socket, sockets ordered by a DB sequence (migration `00007`), wakes replayed after a LISTEN outage (new env `WS_RESYNC_MARGIN`). Open minors are in the ledger. Deploy-time decision for the user: raise `GOMEMLIMIT` on `smsgate-api` from 96 MiB to about 160 MiB (10k sockets need about 110 MiB). During a rolling deploy, old and new instances ignore each other's `smsgate_ws` payloads, so replacing a socket across versions does not work until all instances are updated.
+1. **Android A1 (done).** Reviewed twice; fixes: wake bursts queue instead of dropping the socket, sockets ordered by a DB sequence (migration `00007`), wakes replayed after a LISTEN outage (new env `WS_RESYNC_MARGIN`). Open minors are in the ledger. `GOMEMLIMIT` is 160 MiB (10k sockets need about 110 MiB): set on 2026-10-24 as a CapRover env var on `smsgate-api` (production, running the old code) and as the image default on this branch. During a rolling deploy, old and new instances ignore each other's `smsgate_ws` payloads, so replacing a socket across versions does not work until all instances are updated.
 2. **Android A3 (done).** Reviewed twice. `CredentialStore` now serializes writes, runs Keystore work on IO, has `clearIfToken`/`clearIfDevice` for the 401 path, and clears even when cancelled. The instrumented Keystore test is left for A10.
 3. **Android A4 to A10**, in plan order (A7 note: run `pending()` on every WebSocket (re)connect and treat repeated `new` frames idempotently; the backend replays at most 64 wakes per device after an outage): onboarding, permissions and pairing; message journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens; release pipeline and APK download; end-to-end test on a real phone with performance measurements.
 4. **Before merging `feat/android-app`:**
    - Run the backend and Android CI on the branch (a pull request does this).
-   - Consider raising `GOMEMLIMIT` to about 160 MiB on `smsgate-api` if many sockets are expected.
+   - `GOMEMLIMIT` is already 160 MiB on `smsgate-api` (done 2026-10-24).
    - Production already has `DEVICE_ONLINE_WINDOW=20m`, and CapRover's `smsgate-web` already has WebSocket support and 7-minute proxy timeouts.
 5. **Release signing.** Create a release keystore (outside the repo, with a backup) and add GitHub secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Then tag `android-v<version>` to publish the APK.
 6. **Quota enforcement** (build step 6): plans are seeded, but messages per month and device limits are not enforced. Needed before opening sign-ups to the public.

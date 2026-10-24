@@ -91,7 +91,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `RL_MAX_KEYS` | `100000` | max clients tracked per limiter (bounds memory; idle entries are evicted first) |
 | `TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32` | CIDRs/IPs whose `X-Forwarded-For` is believed (`none` = no proxy). The client IP is the rightmost `X-Forwarded-For` hop that is not itself a trusted proxy, so chained proxies (CapRover nginx, then the web app's nginx) are handled and client-supplied hops are ignored |
 
-Go runtime variables `GOMEMLIMIT` (image default `96MiB`) and `GOGC` may be overridden.
+Go runtime variables `GOMEMLIMIT` (image default `160MiB`, enough for the default `WS_MAX_CONNS=10000`) and `GOGC` may be overridden.
 
 ## API quickstart
 
@@ -136,7 +136,7 @@ Wake routing: creating a message NOTIFYs `smsgate_wake` in the same statement; e
 
 ## Container and CapRover
 
-`backend/Dockerfile` is a multi-stage build (Go on Alpine, then `distroless/static:nonroot`, about 5 MB, `GOMEMLIMIT=96MiB`, port 8080). It builds with the classic builder, no BuildKit features. The image health check runs `/smsgate -healthcheck` (GET `/healthz` on the loopback address derived from `HTTP_ADDR`).
+`backend/Dockerfile` is a multi-stage build (Go on Alpine, then `distroless/static:nonroot`, about 5 MB, `GOMEMLIMIT=160MiB`, port 8080). It builds with the classic builder, no BuildKit features. The image health check runs `/smsgate -healthcheck` (GET `/healthz` on the loopback address derived from `HTTP_ADDR`).
 
     docker build --build-arg REVISION=$(git rev-parse HEAD) -t smsgate-api backend
     docker run -p 8080:8080 -e DATABASE_URL=... -e PUBLIC_URL=https://sms.example.com -e SMTP_HOST=... -e SMTP_FROM=... smsgate-api
@@ -150,7 +150,7 @@ CapRover (the API sits behind the web dashboard's nginx, which serves the SPA an
 
 CI (`.github/workflows/backend.yml`): every push and pull request touching `backend/` runs gofmt, `go vet`, a sqlc drift check, `go test -race` against Postgres 17, the smoke test and a Docker image build; a push to `main` also deploys (see below).
 
-Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`; device WebSockets are routed between instances with Postgres `LISTEN/NOTIFY` (see [Device WebSocket](#device-websocket)). An idle device socket costs about 10 KiB, so many thousands of them need a higher `GOMEMLIMIT` than the image's 96 MiB. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
+Migrations run automatically at startup under a Postgres advisory lock, so several instances may start against one database at once; the sweeper uses `FOR UPDATE SKIP LOCKED`; device WebSockets are routed between instances with Postgres `LISTEN/NOTIFY` (see [Device WebSocket](#device-websocket)). An idle device socket costs about 10 KiB, so many thousands of them need a `GOMEMLIMIT` to match: 10,000 idle sockets use about 110 MiB, so the image default is 160 MiB. Rate limits (see `RL_*`) are per instance, so with N instances the effective limit is up to N times higher.
 
 ## Web dashboard deployment
 
