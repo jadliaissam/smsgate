@@ -86,7 +86,8 @@ describe('Devices', () => {
     const gate = deferred()
     const m = mockFetch([
       { path: '/app/me', json: verifiedMe },
-      { path: '/app/devices', json: { data: devices() } },
+      { path: '/app/devices', json: { data: devices() }, once: true },
+      { path: '/app/devices', json: { data: devices().map((d) => (d.id === 'd1' ? { ...d, name: 'Front desk' } : d)) } },
       {
         method: 'PATCH',
         path: '/app/devices/d1',
@@ -163,5 +164,66 @@ describe('Devices', () => {
     expect(await screen.findByRole('article', { name: 'Pixel 8' })).toBeInTheDocument()
     const errors = screen.getByRole('region', { name: 'Errors' })
     expect(await within(errors).findByText(/couldn.t revoke pixel 8/i)).toBeInTheDocument()
+  })
+
+  it('keeps "Pair a phone" disabled until the devices list has loaded', async () => {
+    const gate = deferred()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices() }, until: gate.promise },
+    ])
+    renderApp('/devices')
+    const pair = await screen.findByRole('button', { name: /^pair a phone$/i })
+    expect(pair).toBeDisabled()
+    gate.resolve()
+    await waitFor(() => expect(pair).toBeEnabled())
+  })
+
+  it('returns focus to the rename button after Enter or Esc', async () => {
+    const user = userEvent.setup()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices() }, once: true },
+      { path: '/app/devices', json: { data: devices().map((d) => (d.id === 'd1' ? { ...d, name: 'Front desk' } : d)) } },
+      { method: 'PATCH', path: '/app/devices/d1', json: { ...devices()[0], name: 'Front desk' } },
+    ])
+    renderApp('/devices')
+
+    await user.click(await screen.findByRole('button', { name: /rename pixel 8/i }))
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: /rename pixel 8/i })).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+    const input = screen.getByRole('textbox', { name: /device name/i })
+    await user.clear(input)
+    await user.type(input, 'Front desk{Enter}')
+    expect(screen.getByRole('button', { name: /rename front desk/i })).toHaveFocus()
+  })
+
+  it('refetches the list after a rename settles', async () => {
+    const user = userEvent.setup()
+    const m = mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices() } },
+      { method: 'PATCH', path: '/app/devices/d1', json: { ...devices()[0], name: 'Front desk' } },
+    ])
+    renderApp('/devices')
+    await user.click(await screen.findByRole('button', { name: /rename pixel 8/i }))
+    const input = screen.getByRole('textbox', { name: /device name/i })
+    await user.clear(input)
+    await user.type(input, 'Front desk{Enter}')
+    await waitFor(() => expect(m.callsTo('PATCH', '/app/devices/d1')).toHaveLength(1))
+    await waitFor(() => expect(m.callsTo('GET', '/app/devices')).toHaveLength(2))
+  })
+
+  it('shows a last_seen in the future (clock skew) as "just now"', async () => {
+    const [, offline] = devices()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [{ ...offline!, last_seen_at: new Date(Date.now() + 2 * 60_000).toISOString() }] } },
+    ])
+    renderApp('/devices')
+    const offlineCard = await screen.findByRole('article', { name: 'Old Galaxy' })
+    expect(within(offlineCard).getByText(/last seen just now/i)).toBeInTheDocument()
   })
 })

@@ -14,36 +14,8 @@ import { EmptyState } from '../ui/EmptyState'
 import { AlertIcon } from '../ui/icons'
 import { Modal } from '../ui/Modal'
 import { Skeleton } from '../ui/Skeleton'
+import { absoluteTime, sinceTime, useNow } from '../ui/time'
 import { PairModal } from './PairModal'
-
-/** Re-renders every `ms` so relative times ("2 minutes ago") stay fresh. */
-function useNow(ms: number): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), ms)
-    return () => window.clearInterval(t)
-  }, [ms])
-  return now
-}
-
-const units: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['year', 365 * 86_400],
-  ['month', 30 * 86_400],
-  ['day', 86_400],
-  ['hour', 3_600],
-  ['minute', 60],
-  ['second', 1],
-]
-
-/** "2 hours ago", "yesterday", "now" — in the browser's locale. */
-function relativeTime(iso: string, now: number): string {
-  const seconds = Math.round((new Date(iso).getTime() - now) / 1000)
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-  for (const [unit, size] of units) {
-    if (Math.abs(seconds) >= size || unit === 'second') return rtf.format(Math.round(seconds / size), unit)
-  }
-  return rtf.format(0, 'second')
-}
 
 export function Devices() {
   const devices = useDevices()
@@ -70,7 +42,9 @@ export function Devices() {
         title="Devices"
         description="Android phones paired with your account. Each one sends SMS from its own SIMs."
         actions={
-          <Button icon={<PlusIcon />} onClick={openPair}>
+          // Enabled once the list is known: the pair flow detects the new
+          // phone against it.
+          <Button icon={<PlusIcon />} onClick={openPair} disabled={!devices.data}>
             Pair a phone
           </Button>
         }
@@ -140,6 +114,18 @@ interface DeviceCardProps {
 
 function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
   const [editing, setEditing] = useState(false)
+  const renameButton = useRef<HTMLButtonElement>(null)
+  // Enter/Esc hand focus back to the rename button; a blur save does not.
+  const refocus = useRef(false)
+  useEffect(() => {
+    if (editing || !refocus.current) return
+    refocus.current = false
+    renameButton.current?.focus()
+  }, [editing])
+  const stopEditing = (viaKeyboard: boolean) => {
+    refocus.current = viaKeyboard
+    setEditing(false)
+  }
 
   return (
     <Card interactive padding="none" role="article" aria-label={device.name} className="flex h-full flex-col">
@@ -157,7 +143,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
         </span>
         <div className="min-w-0 flex-1">
           {editing ? (
-            <RenameInput device={device} onDone={() => setEditing(false)} />
+            <RenameInput device={device} onDone={stopEditing} />
           ) : (
             <div className="group flex min-w-0 items-center gap-1">
               <h2
@@ -168,6 +154,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
                 {device.name}
               </h2>
               <button
+                ref={renameButton}
                 type="button"
                 onClick={() => setEditing(true)}
                 aria-label={`Rename ${device.name}`}
@@ -189,7 +176,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
               </Badge>
             ) : (
               <Badge tone="neutral" dot>
-                {device.last_seen_at ? <>Last seen {relativeTime(device.last_seen_at, now)}</> : 'Never connected'}
+                {device.last_seen_at ? <span title={absoluteTime(device.last_seen_at)}>Last seen {sinceTime(device.last_seen_at, now)}</span> : 'Never connected'}
               </Badge>
             )}
           </div>
@@ -235,16 +222,16 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
 }
 
 /** Inline rename: Enter or blur saves (optimistically), Esc cancels. */
-function RenameInput({ device, onDone }: { device: Device; onDone: () => void }) {
+function RenameInput({ device, onDone }: { device: Device; onDone: (viaKeyboard: boolean) => void }) {
   const rename = useRenameDevice()
   const finished = useRef(false)
 
-  const finish = (value: string | null) => {
+  const finish = (value: string | null, viaKeyboard = false) => {
     if (finished.current) return
     finished.current = true
     const name = value?.trim() ?? ''
     if (name && name !== device.name) rename.mutate({ id: device.id, name })
-    onDone()
+    onDone(viaKeyboard)
   }
 
   return (
@@ -258,10 +245,10 @@ function RenameInput({ device, onDone }: { device: Device; onDone: () => void })
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()
-          finish(e.currentTarget.value)
+          finish(e.currentTarget.value, true)
         } else if (e.key === 'Escape') {
           e.preventDefault()
-          finish(null)
+          finish(null, true)
         }
       }}
       className={cx(

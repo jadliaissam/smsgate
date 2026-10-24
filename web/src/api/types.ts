@@ -35,6 +35,14 @@ export interface PairingCode {
   qr_payload: string
 }
 
+/** A pairing code as the dashboard tracks it, with a skew-free lifetime. */
+export interface IssuedPairingCode extends PairingCode {
+  /** Client clock when the response arrived (epoch ms). */
+  receivedAt: number
+  /** Lifetime left at that moment: expires_at minus the server's Date. */
+  ttlMs: number
+}
+
 /** GET /app/api-keys item */
 export interface ApiKey {
   id: string

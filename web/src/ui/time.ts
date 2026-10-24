@@ -29,6 +29,16 @@ export function relativeTime(iso: string, now: number): string {
   return rtf.format(0, 'second')
 }
 
+/**
+ * Relative time for something that already happened: a timestamp in the
+ * future (server clock ahead of the browser) or within the last few seconds
+ * reads "just now" instead of "in 2 minutes".
+ */
+export function sinceTime(iso: string, now: number): string {
+  if (new Date(iso).getTime() > now - 5_000) return 'just now'
+  return relativeTime(iso, now)
+}
+
 /** Full local date and time, for a title/tooltip next to a relative time. */
 export function absoluteTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
