@@ -33,13 +33,15 @@ export function Messages() {
   const now = useNow(30_000)
 
   // A fresh modal per opening: a new Idempotency-Key and empty fields.
+  // `?send` (from the Overview) opens it on arrival; `?message=<id>` opens
+  // that message's drawer once the list has it.
   const [sendSession, setSendSession] = useState(0)
-  const [sendOpen, setSendOpen] = useState(false)
+  const [sendOpen, setSendOpen] = useState(() => search.send === true && me.email_verified)
   const [flashId, setFlashId] = useState<string>()
   // The drawer keeps its message while it animates out.
-  const [selectedId, setSelectedId] = useState<string>()
+  const [selectedId, setSelectedId] = useState<string | undefined>(search.message)
   const [selectedSnapshot, setSelectedSnapshot] = useState<Message | null>(null)
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(search.message !== undefined)
 
   const names = useMemo(() => new Map(devices.data?.map((d) => [d.id, d.name])), [devices.data])
   const rows = useMemo(() => messages.data?.pages.flatMap((p) => p.data) ?? [], [messages.data])
@@ -48,6 +50,10 @@ export function Messages() {
 
   const filtered = search.status !== undefined || search.device !== undefined
   const setFilters = (next: MessagesSearch) => void navigate({ search: (prev) => ({ ...prev, ...next }), replace: true })
+  // Drop a one-shot `send` / `message` param once its overlay closes.
+  const clearParam = (key: 'send' | 'message') => {
+    if (search[key] !== undefined) void navigate({ search: (prev) => ({ ...prev, [key]: undefined }), replace: true })
+  }
   const openSend = () => {
     setSendSession((n) => n + 1)
     setSendOpen(true)
@@ -189,13 +195,19 @@ export function Messages() {
       <SendMessageModal
         key={sendSession}
         open={sendOpen}
-        onClose={() => setSendOpen(false)}
+        onClose={() => {
+          setSendOpen(false)
+          clearParam('send')
+        }}
         onSent={(m) => setFlashId(m.id)}
       />
 
       <MessageDrawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {
+          setDrawerOpen(false)
+          clearParam('message')
+        }}
         message={selected}
         deviceName={selected ? names.get(selected.device_id) : undefined}
       />

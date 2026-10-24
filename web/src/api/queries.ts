@@ -26,6 +26,7 @@ import {
   type Page,
   type PairingCode,
   type SendMessageInput,
+  type Stats,
 } from './types'
 import { useToast } from '../ui/Toast'
 
@@ -391,10 +392,27 @@ export function useSendMessage() {
         })
       }
       void qc.invalidateQueries({ queryKey: messagesKey })
+      void qc.invalidateQueries({ queryKey: statsKey })
     },
     onError: (err) => {
       if (isApiError(err, 'email_not_verified')) void qc.invalidateQueries({ queryKey: meKey })
       if (isApiError(err, 'device_not_found')) void qc.invalidateQueries({ queryKey: devicesKey })
     },
+  })
+}
+
+// ---- usage stats -----------------------------------------------------------
+
+export const statsKey = ['stats'] as const
+/** Poll interval of the Overview's usage stats (paused while the tab is hidden). */
+export const STATS_POLL_MS = 15_000
+
+/** GET /app/stats: plan, this month's usage and the last 24 h by status. */
+export function useStats() {
+  return useQuery({
+    queryKey: statsKey,
+    queryFn: ({ signal }) => api<Stats>('/app/stats', { signal }),
+    refetchInterval: STATS_POLL_MS,
+    refetchIntervalInBackground: false,
   })
 }
