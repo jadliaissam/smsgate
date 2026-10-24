@@ -399,8 +399,14 @@ func TestDeviceMe(t *testing.T) {
 	if r.StatusCode != 200 || m["device_id"] != id1.String() || m["name"] == "" || m["account_email"] != "a@example.com" {
 		t.Fatalf("%d %v", r.StatusCode, m)
 	}
-	if ts, err := time.Parse(time.RFC3339Nano, m["server_time"].(string)); err != nil || time.Since(ts) > time.Minute {
-		t.Fatalf("server_time %v %v", m["server_time"], err)
+	a.Advance(time.Hour) // the app clock moves; server_time must stay on the DB clock
+	_, m = a.Do("GET", "/device/v1/me", nil, bearer(tok1)...)
+	ts, err := time.Parse(time.RFC3339Nano, m["server_time"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(ts); d < -time.Minute || d > time.Minute {
+		t.Fatalf("server_time %s is %s off the DB clock", ts, d)
 	}
 	_, m2 := a.Do("GET", "/device/v1/me", nil, bearer(tok2)...)
 	if m2["device_id"] != id2.String() || m2["account_email"] != "b@example.com" {
@@ -415,7 +421,7 @@ func TestDeviceUnregister(t *testing.T) {
 	a := apptest.New(t)
 	c := a.Signup(t, "a@example.com")
 	_, tok := a.PairDevice(t, c)
-	_, other := a.PairDevice(t, c)
+	otherID, other := a.PairDevice(t, c)
 	if r, _ := a.Do("POST", "/device/v1/unregister", nil, bearer(tok)...); r.StatusCode != 204 {
 		t.Fatalf("unregister: %d", r.StatusCode)
 	}
@@ -425,7 +431,7 @@ func TestDeviceUnregister(t *testing.T) {
 		}
 	}
 	_, l := a.Do("GET", "/app/devices", nil, ck(c)...)
-	if len(l["data"].([]any)) != 1 {
+	if ds := l["data"].([]any); len(ds) != 1 || ds[0].(map[string]any)["id"] != otherID.String() {
 		t.Fatalf("dashboard list: %v", l)
 	}
 	if r, _ := a.Do("GET", "/device/v1/me", nil, bearer(other)...); r.StatusCode != 200 {
