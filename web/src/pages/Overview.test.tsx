@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, mockFetch, type MockRoute } from '../test/mockFetch'
 import { deferred, locationOf, renderApp, unverifiedMe, verifiedMe } from '../test/renderApp'
@@ -82,12 +82,57 @@ function step(name: RegExp) {
   return screen.getByRole('listitem', { name })
 }
 
+/** A stat card (a labelled group). */
 async function card(name: RegExp) {
-  return screen.findByRole('region', { name })
+  return screen.findByRole('group', { name })
+}
+
+/** The recent messages section (the page's only region landmark). */
+async function recentSection() {
+  return screen.findByRole('region', { name: /recent messages/i })
+}
+
+/** A UUID-shaped message id (the `?message=` param only accepts those). */
+function uid(n: number): string {
+  return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 }
 
 // [Review Focus 4] Skeleton while loading, error state with Retry.
 describe('Overview', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('has one region landmark: stat cards are groups', async () => {
+    mockFetch(routes({ recent: [msg(uid(1))] }))
+    renderApp('/')
+    await recentSection()
+    expect(await card(/usage this month/i)).toBeInTheDocument()
+    expect(within(screen.getByRole('main')).getAllByRole('region')).toHaveLength(1)
+  })
+
+  it('refreshes recent messages when the polled month total changes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const m = mockFetch(
+      routes(
+        { recent: [msg(uid(1))] },
+        { path: '/app/stats', json: sample, once: true },
+        { path: '/app/stats', json: sample, once: true },
+        { path: '/app/stats', json: stats({ sent: 4, delivered: 8, failed: 1 }) },
+      ),
+    )
+    renderApp('/')
+    await recentSection()
+    await waitFor(() => expect(m.callsTo('GET', RECENT)).toHaveLength(1))
+    // Same total: no refetch.
+    await act(() => vi.advanceTimersByTimeAsync(15_000))
+    await waitFor(() => expect(m.callsTo('GET', '/app/stats')).toHaveLength(2))
+    expect(m.callsTo('GET', RECENT)).toHaveLength(1)
+    // A new message this month: the recent list refetches.
+    await act(() => vi.advanceTimersByTimeAsync(15_000))
+    await waitFor(() => expect(m.callsTo('GET', RECENT)).toHaveLength(2))
+  })
+
   it('shows skeletons first, then the checklist computed from me, devices and keys', async () => {
     const gate = deferred()
     mockFetch([
@@ -236,20 +281,20 @@ describe('Overview', () => {
 
   it('recent messages: the 5 newest, View all links to /messages, a row opens its drawer', async () => {
     const user = userEvent.setup()
-    const recent = ['m1', 'm2', 'm3', 'm4', 'm5'].map((id) => msg(id))
+    const recent = [1, 2, 3, 4, 5].map((n) => msg(uid(n)))
     const m = mockFetch(
       routes({ recent }, { path: '/app/messages?limit=50', json: { data: recent } }),
     )
     const { router } = renderApp('/')
 
-    const region = await card(/recent messages/i)
+    const region = await recentSection()
     const list = await within(region).findByRole('list', { name: /recent messages/i })
     expect(within(list).getAllByRole('listitem')).toHaveLength(5)
     expect(m.callsTo('GET', RECENT)).toHaveLength(1)
     expect(within(region).getByRole('link', { name: /view all/i })).toHaveAttribute('href', '/messages')
 
     await user.click(within(list).getAllByRole('button')[1]!)
-    await waitFor(() => expect(locationOf(router)).toBe('/messages?message=m2'))
+    await waitFor(() => expect(locationOf(router)).toBe(`/messages?message=${uid(2)}`))
     const drawer = await screen.findByRole('dialog')
     expect(await within(drawer).findByText(/timeline/i)).toBeInTheDocument()
   })
@@ -270,7 +315,7 @@ describe('Overview', () => {
     mockFetch(routes({ s: empty }, { path: '/app/messages?limit=50', json: { data: [] } }))
     const { router } = renderApp('/')
 
-    const region = await card(/recent messages/i)
+    const region = await recentSection()
     const link = await within(region).findByRole('link', { name: /send a test message/i })
     expect(link).toHaveAttribute('href', '/messages?send=true')
     await user.click(link)

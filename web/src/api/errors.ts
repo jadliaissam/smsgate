@@ -24,7 +24,7 @@ const copy: Record<string, string> = {
   invalid_body: 'The message contains characters that can’t be sent.',
   invalid_ttl: 'Choose a valid expiry time.',
   invalid_sim_slot: 'That SIM isn’t available on this device.',
-  idempotency_mismatch: 'This request was already sent with different details. Reopen the form and try again.',
+  idempotency_mismatch: 'A message from this form was already queued, so this one wasn’t sent again. Check the log, or start a new message to send another.',
   message_not_found: 'That message no longer exists.',
   invalid_idempotency_key: 'The request ID was rejected. Reopen the form and try again.',
   invalid_client_ref: 'The reference is too long. Shorten it and try again.',
