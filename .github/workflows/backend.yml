@@ -158,8 +158,9 @@ jobs:
         run: |
           URL="${URL%/}"
           live=
-          for _ in $(seq 1 60); do
-            live=$(curl -fsS --max-time 10 "$URL/healthz" 2>/dev/null | jq -r '.revision // empty' 2>/dev/null) || live=
+          deadline=$((SECONDS + 300))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            live=$(curl -fsS --max-time 5 "$URL/healthz" 2>/dev/null | jq -r '.revision // empty' 2>/dev/null) || live=
             if [ "$live" = "$GITHUB_SHA" ]; then
               echo "revision $GITHUB_SHA is live"
               exit 0
