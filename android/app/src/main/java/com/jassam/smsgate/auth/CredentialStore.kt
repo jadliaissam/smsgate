@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -104,13 +105,15 @@ class CredentialStore(
         true
     }
 
-    private suspend fun clearLocked() {
+    // Not cancellable: a cancelled unpair must still wipe the store and destroy the key.
+    private suspend fun clearLocked() = withContext(NonCancellable) {
         cache = null
         try {
             dataStore.edit { it.clear() }
         } finally {
             withContext(Dispatchers.IO) { cipher.reset() }
         }
+        cache = null // a concurrent load() may have repopulated it from the old blob
     }
 
     private fun prefs(): Flow<Preferences> = dataStore.data.catch { e ->

@@ -7,8 +7,13 @@ class FakeTokenCipher : TokenCipher {
     var encrypts = 0
     var decrypts = 0
 
+    /** Runs inside [encrypt] (on the caller's thread), e.g. to block it and force an interleaving. */
+    @Volatile
+    var onEncrypt: (() -> Unit)? = null
+
     override fun encrypt(plaintext: String): String {
         encrypts++
+        onEncrypt?.invoke()
         keyLost = false
         return "enc:" + plaintext.reversed()
     }

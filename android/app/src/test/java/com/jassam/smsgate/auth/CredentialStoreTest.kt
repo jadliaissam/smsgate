@@ -6,13 +6,16 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -153,25 +156,75 @@ class CredentialStoreTest {
     }
 
     @Test
-    fun concurrentSaveAndClearLeaveConsistentState() = runBlocking {
-        repeat(50) { i ->
-            val jobs = listOf(
-                async(Dispatchers.IO) { store.save("https://a", "d$i", "dt_$i") },
-                async(Dispatchers.IO) { store.clear() },
-            )
-            jobs.awaitAll()
-            // Either order is valid, but the store and cache must agree: no half-written state.
-            val c = store.load()
-            val raw = dataStore.data.first().asMap()
-            if (c == null) assertTrue(raw.isEmpty()) else assertEquals("dt_$i", c.deviceToken)
+    fun clearWaitsForSaveInFlight() = runBlocking {
+        val inEncrypt = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        cipher.onEncrypt = { inEncrypt.countDown(); release.await() }
+        val save = async(Dispatchers.IO) { store.save("https://a", "d", "dt_1") }
+        assertTrue(inEncrypt.await(5, TimeUnit.SECONDS))
+        val clear = async(Dispatchers.IO) { store.clear() }
+        try {
+            delay(200)
+            assertFalse("clear must wait for the save in flight", clear.isCompleted)
+            assertEquals(0, cipher.resets)
+        } finally {
+            release.countDown() // never leave the blocked save hanging if an assertion fails
         }
+        awaitAll(save, clear)
+        // The save finished first, then the clear wiped it: no blob left without its key.
+        assertNull(store.load())
+        assertTrue(dataStore.data.first().asMap().isEmpty())
+        assertEquals(1, cipher.resets)
     }
 
     @Test
-    fun cancelledSaveStoresNothing() = runBlocking {
-        val job = launch(start = CoroutineStart.LAZY) { store.save("https://a", "d", "dt_1") }
+    fun staleClearIfTokenWaitsForSaveAndSparesNewCredentials() = runBlocking {
+        store.save("https://a", "d1", "dt_old")
+        val inEncrypt = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        cipher.onEncrypt = { inEncrypt.countDown(); release.await() }
+        val save = async(Dispatchers.IO) { store.save("https://a", "d2", "dt_new") }
+        assertTrue(inEncrypt.await(5, TimeUnit.SECONDS))
+        val clear = async(Dispatchers.IO) { store.clearIfToken("dt_old") } // late 401 of an old request
+        try {
+            delay(200)
+            assertFalse(clear.isCompleted)
+        } finally {
+            release.countDown()
+        }
+        awaitAll(save, clear)
+        assertFalse(clear.await())
+        assertEquals(Credentials("https://a", "d2", "dt_new"), store.load())
+    }
+
+    @Test
+    fun cancelledSaveStoresNothingAndStoreStaysUsable() = runBlocking {
+        val inEncrypt = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        cipher.onEncrypt = { inEncrypt.countDown(); release.await() }
+        val job = launch(Dispatchers.IO) { store.save("https://a", "d", "dt_1") }
+        assertTrue(inEncrypt.await(5, TimeUnit.SECONDS))
         job.cancel()
+        release.countDown()
         job.join()
         assertNull(store.load())
+        cipher.onEncrypt = null
+        store.save("https://a", "d", "dt_2")
+        assertEquals("dt_2", store.deviceToken())
+        store.clear()
+        assertNull(store.load())
+    }
+
+    @Test
+    fun cancelledClearStillWipesAndDestroysKey() = runBlocking {
+        store.save("https://a", "d", "dt_1")
+        val job = launch(Dispatchers.IO) {
+            currentCoroutineContext().cancel()
+            store.clear()
+        }
+        job.join()
+        assertNull(store.load())
+        assertTrue(dataStore.data.first().asMap().isEmpty())
+        assertEquals(1, cipher.resets)
     }
 }
