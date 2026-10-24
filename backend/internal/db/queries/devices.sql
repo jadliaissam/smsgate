@@ -14,6 +14,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 SELECT id, user_id, fcm_token FROM devices
 WHERE token_hash = $1 AND revoked_at IS NULL;
 
+-- name: GetDeviceIdentity :one
+SELECT d.name, u.email FROM devices d JOIN users u ON u.id = d.user_id
+WHERE d.id = $1 AND d.revoked_at IS NULL;
+
 -- name: UpdateFCMToken :exec
 UPDATE devices SET fcm_token = $2 WHERE id = $1 AND revoked_at IS NULL;
 

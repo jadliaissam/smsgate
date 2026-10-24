@@ -74,6 +74,8 @@ func Routes(mux *http.ServeMux, d Deps) {
 	dev := RequireDevice(d.Q)
 	mux.Handle("PUT /device/v1/fcm-token", dev(devRL(handle(s.setFCMToken))))
 	mux.Handle("POST /device/v1/heartbeat", dev(devRL(handle(s.heartbeat))))
+	mux.Handle("GET /device/v1/me", dev(devRL(handle(s.me))))
+	mux.Handle("POST /device/v1/unregister", dev(devRL(handle(s.unregister))))
 }
 
 func handle(h httpx.HandlerFunc) http.Handler { return httpx.Handle(h) }

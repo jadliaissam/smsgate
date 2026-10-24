@@ -51,7 +51,7 @@ Environment only; `backend/.env.example` lists every variable with its default a
 | `LIST_LIMIT_DEFAULT` / `LIST_LIMIT_MAX` | `50` / `200` | list page size |
 | `PENDING_LIMIT` | `50` | max messages returned to a device per poll |
 | `PAIRING_CODE_TTL` | `5m` | pairing code validity |
-| `DEVICE_ONLINE_WINDOW` | `2m` | heartbeat age still counted online |
+| `DEVICE_ONLINE_WINDOW` | `2m` | heartbeat age still counted online; the Android app heartbeats every 15 min, so production should set `20m` |
 | `DEVICE_LOST_AFTER` | `15m` | dispatched-but-unreported messages become `device_lost` after this |
 | `SWEEP_INTERVAL` / `SWEEP_BATCH` | `2s` / `500` | expiry sweeper |
 | `PURGE_INTERVAL` | `10m` | how often the sweeper deletes sessions, email tokens and pairing codes that expired (or were used) over an hour ago |
@@ -107,7 +107,7 @@ Dashboard-style calls use a session cookie; the public API uses an API key; devi
 
 The dashboard uses the same message endpoints under session auth: `POST /app/messages` (requires a verified email, otherwise `403 email_not_verified`; per-user send limit), `GET /app/messages`, `GET /app/messages/{id}`, and `GET /app/stats` (plan, this calendar month's and the last 24 hours' message counts by status). `GET /healthz` returns `{"ok":true,"revision":"<APP_REVISION>"}` when the database is reachable.
 
-Request bodies must be sent with `Content-Type: application/json` (otherwise `415 unsupported_media_type`). Over a rate limit the API answers `429 rate_limited` with `Retry-After` (seconds). An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`. Errors are JSON with a stable `code`.
+Request bodies must be sent with `Content-Type: application/json` (otherwise `415 unsupported_media_type`). Over a rate limit the API answers `429 rate_limited` with `Retry-After` (seconds). An optional `Idempotency-Key` header on `POST /v1/messages` makes retries safe. Device endpoints: `GET /device/v1/messages/pending`, `POST /device/v1/messages/{id}/claim`, `POST /device/v1/messages/{id}/status`, `PUT /device/v1/fcm-token`, `POST /device/v1/heartbeat`, `GET /device/v1/me` (returns `{device_id, name, account_email, server_time}` so the app can show which account and name it is paired as) and `POST /device/v1/unregister` (`204`; revokes the calling device exactly like the dashboard's revoke, after which its token gets `401`). Errors are JSON with a stable `code`.
 
 ## Container and CapRover
 

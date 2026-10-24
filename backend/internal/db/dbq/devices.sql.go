@@ -106,6 +106,23 @@ func (q *Queries) GetDeviceByTokenHash(ctx context.Context, tokenHash string) (G
 	return i, err
 }
 
+const getDeviceIdentity = `-- name: GetDeviceIdentity :one
+SELECT d.name, u.email FROM devices d JOIN users u ON u.id = d.user_id
+WHERE d.id = $1 AND d.revoked_at IS NULL
+`
+
+type GetDeviceIdentityRow struct {
+	Name  string
+	Email string
+}
+
+func (q *Queries) GetDeviceIdentity(ctx context.Context, id uuid.UUID) (GetDeviceIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getDeviceIdentity, id)
+	var i GetDeviceIdentityRow
+	err := row.Scan(&i.Name, &i.Email)
+	return i, err
+}
+
 const heartbeat = `-- name: Heartbeat :one
 UPDATE devices SET
     battery = $1,

@@ -267,3 +267,36 @@ func (s *service) revoke(w http.ResponseWriter, r *http.Request) error {
 }
 
 func notFound() *httpx.Error { return httpx.NotFound("device_not_found") }
+
+// me tells the app which account and name it is paired as.
+func (s *service) me(w http.ResponseWriter, r *http.Request) error {
+	d := FromContext(r.Context())
+	row, err := s.Q.GetDeviceIdentity(r.Context(), d.ID)
+	if err != nil {
+		if isNoRows(err) { // revoked between authentication and lookup
+			return httpx.Unauthorized()
+		}
+		return err
+	}
+	return httpx.JSON(w, http.StatusOK, struct {
+		DeviceID     uuid.UUID `json:"device_id"`
+		Name         string    `json:"name"`
+		AccountEmail string    `json:"account_email"`
+		ServerTime   time.Time `json:"server_time"`
+	}{d.ID, row.Name, row.Email, s.Now().UTC()})
+}
+
+// unregister revokes the calling device (same effect as the dashboard's revoke).
+func (s *service) unregister(w http.ResponseWriter, r *http.Request) error {
+	d := FromContext(r.Context())
+	now := s.Now()
+	n, err := s.Q.RevokeDevice(r.Context(), dbq.RevokeDeviceParams{ID: d.ID, UserID: d.UserID, Now: &now})
+	if err != nil {
+		return err
+	}
+	if n == 0 { // already revoked concurrently
+		return httpx.Unauthorized()
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
