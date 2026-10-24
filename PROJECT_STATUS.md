@@ -38,7 +38,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 **Where things stand in git:**
 - `main` is the only branch. It holds the backend, the complete dashboard, CI/CD and this file, and it is what runs in production. Start new work from `main` on a new branch.
 - `smsgate-e5a24-*.json` (Firebase service-account key) is git-ignored; never commit it.
-- `google-services.json` (Android Firebase config) is deliberately left untracked in the repo root; move it to `android/app/` when the Android project is created.
+- `google-services.json` (Android Firebase config) is private and git-ignored everywhere. Copy it into `android/app/` for local builds; CI will write it from a GitHub secret.
 - `.superpowers/sdd/` holds the detailed progress ledgers, including every ruling and deferred minor issue. It is git-ignored, so it exists only on the original machine. If it is missing, this file and `git log` are the record.
 
 **Known gotchas:**
@@ -256,7 +256,7 @@ The browser reaches the API only through the web app's nginx. `PUBLIC_URL` is th
 **Email and push (configured 2026-10-24):**
 - **Email:** `MAILER=smtp` through Gmail (`smtp.gmail.com:587`, user and sender `hesokaslave@gmail.com`). The app password is in `/Users/eps/gmail_app_pass.txt`; a test email sent with these settings reached jadliaissam@gmail.com on 2026-10-24. The API's own verification email is not tested yet.
 - **Push:** `FCM_CREDENTIALS_JSON` holds the Firebase service account for project `smsgate-e5a24`. The key file `smsgate-e5a24-55dc3db39729.json` sits in the repo root and is git-ignored. Google accepted the key in a token exchange, and the API started without the push-disabled warning.
-- **Android config:** `google-services.json` in the repo root is the Android app's Firebase config (package `com.jassam.smsgate`), for the future `android/` project.
+- **Android config:** `google-services.json` in the repo root is the Android app's Firebase config (package `com.jassam.smsgate`). It is private and git-ignored.
 
 **Account:** a verified dashboard account exists for `jadliaissam@gmail.com`. The password is in `/Users/eps/smsgate-account.txt` (readable only by its owner).
 

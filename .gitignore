@@ -9,3 +9,6 @@ android/build
 # Firebase service-account keys (secrets): never commit
 /smsgate-e5a24-*.json
 *firebase-adminsdk*.json
+
+# Android Firebase config: private, never commit (CI writes it from a secret)
+google-services.json
