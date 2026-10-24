@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { isApiError } from '../api/client'
-import { errorCopy } from '../api/errors'
 import { useDevices, useRenameDevice, useRevokeDevice } from '../api/queries'
 import type { Device, SIM } from '../api/types'
 import { PageHeader } from '../layout/PageHeader'
@@ -11,8 +9,8 @@ import { Card } from '../ui/Card'
 import { CopyButton } from '../ui/CopyButton'
 import { cx, focusRing } from '../ui/cx'
 import { EmptyState } from '../ui/EmptyState'
-import { AlertIcon } from '../ui/icons'
 import { Modal } from '../ui/Modal'
+import { QueryErrorCard } from '../ui/QueryErrorCard'
 import { Skeleton } from '../ui/Skeleton'
 import { absoluteTime, sinceTime, useNow } from '../ui/time'
 import { PairModal } from './PairModal'
@@ -50,21 +48,15 @@ export function Devices() {
         }
       />
 
-      {devices.error ? (
-        <Card role="alert" className="flex flex-col items-center py-12 text-center">
-          <span className="mb-4 flex size-11 items-center justify-center rounded-2xl bg-danger-50 text-xl text-danger-600 dark:bg-danger-500/10 dark:text-danger-400">
-            <AlertIcon />
-          </span>
-          <h2 className="text-[15px] font-semibold tracking-tight text-fg">Couldn’t load your devices</h2>
-          <p className="mt-1.5 max-w-sm text-sm text-pretty text-fg-muted">
-            {errorCopy(isApiError(devices.error) ? devices.error.code : 'default')}
-          </p>
-          <Button variant="secondary" className="mt-6" loading={devices.isFetching} onClick={() => void devices.refetch()}>
-            Retry
-          </Button>
-        </Card>
+      {devices.error && !devices.data ? (
+        <QueryErrorCard
+          title="Couldn’t load your devices"
+          error={devices.error}
+          retrying={devices.isFetching}
+          onRetry={() => void devices.refetch()}
+        />
       ) : !devices.data ? (
-        <div data-testid="devices-skeleton" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div data-testid="devices-skeleton" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <DeviceSkeleton key={i} />
           ))}
@@ -72,9 +64,11 @@ export function Devices() {
       ) : devices.data.length === 0 ? (
         <EmptyDevices onPair={openPair} />
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        // grid-cols-1 (minmax(0, 1fr)) and min-w-0 keep a card within narrow
+        // screens: the full device ID truncates instead of widening the page.
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {devices.data.map((d) => (
-            <li key={d.id} className="animate-fade-in motion-reduce:animate-none">
+            <li key={d.id} className="min-w-0 animate-fade-in motion-reduce:animate-none">
               <DeviceCard device={d} now={now} onRevoke={askRevoke} />
             </li>
           ))}
@@ -128,7 +122,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
   }
 
   return (
-    <Card interactive padding="none" role="article" aria-label={device.name} className="flex h-full flex-col">
+    <Card interactive padding="none" role="article" aria-label={device.name} className="flex h-full min-w-0 flex-col">
       <div className="flex items-start gap-3.5 p-5 pb-4">
         <span
           aria-hidden="true"
@@ -183,7 +177,7 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
         </div>
       </div>
 
-      <dl className="flex flex-1 flex-col gap-4 px-5 pb-5">
+      <dl className="flex min-w-0 flex-1 flex-col gap-4 px-5 pb-5">
         <div>
           <dt className="mb-1.5 text-xs font-medium text-fg-muted">Battery</dt>
           <dd>
@@ -196,10 +190,10 @@ function DeviceCard({ device, now, onRevoke }: DeviceCardProps) {
             <SimChips sims={device.sims} />
           </dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="mb-1 text-xs font-medium text-fg-muted">Device ID</dt>
-          <dd className="flex items-center gap-1">
-            <code className="min-w-0 truncate font-mono text-xs text-fg">{device.id}</code>
+          <dd className="flex min-w-0 items-center gap-1">
+            <code data-testid="device-id" className="min-w-0 truncate font-mono text-xs text-fg">{device.id}</code>
             <CopyButton value={device.id} label="Copy device ID" className="-my-1 shrink-0" />
           </dd>
         </div>

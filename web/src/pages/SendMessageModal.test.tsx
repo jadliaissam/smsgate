@@ -298,3 +298,22 @@ describe('SendMessageModal', () => {
     await waitFor(() => expect(row).not.toHaveAttribute('data-flash'), { timeout: 3000 })
   })
 })
+
+describe('SendMessageModal: a later error', () => {
+  it('drops "Start a new message" when the next attempt fails for another reason', async () => {
+    const user = userEvent.setup()
+    setup(
+      { method: 'POST', path: '/app/messages', ...apiError(409, 'idempotency_mismatch'), once: true },
+      { method: 'POST', path: '/app/messages', ...apiError(500, 'internal'), once: true },
+      { path: '/app/stats', json: {} },
+    )
+    const dialog = await openForm(user)
+    await fill(user, dialog, '+37060000000', 'Edited')
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    await within(dialog).findByRole('button', { name: /start a new message/i })
+
+    await user.click(within(dialog).getByRole('button', { name: /send message/i }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(errorCopy('internal'))
+    expect(within(dialog).queryByRole('button', { name: /start a new message/i })).not.toBeInTheDocument()
+  })
+})

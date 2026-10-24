@@ -201,11 +201,14 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
 
         <div className="mt-5 rounded-2xl border border-border bg-surface-sunken/60 p-4">
           <p className="text-xs font-medium text-fg-muted">Pairing code</p>
-          <div className="mt-1 flex items-center gap-3">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             {issued ? (
+              // Always one line: sized so "XXXX-XXXX", the copy button and
+              // the countdown share the row down to 320px (should a font run
+              // wider, the countdown wraps below, never the code).
               <span
                 className={cx(
-                  'font-mono text-2xl font-semibold tracking-[0.18em] text-fg tabular-nums sm:text-[28px]',
+                  'font-mono text-lg font-semibold tracking-[0.06em] whitespace-nowrap text-fg tabular-nums sm:text-xl sm:tracking-[0.1em]',
                   expired && 'text-fg-subtle line-through decoration-2',
                 )}
               >
@@ -301,7 +304,7 @@ function CountdownRing({ leftMs, totalMs }: { leftMs: number; totalMs: number })
   const label = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
   const low = seconds <= 60
   return (
-    <div className="relative size-14 shrink-0">
+    <div className="relative size-12 shrink-0 sm:size-14">
       <svg viewBox="0 0 48 48" className="size-full -rotate-90" aria-hidden="true">
         <circle cx="24" cy="24" r={r} fill="none" strokeWidth="3.5" className="stroke-border" />
         <circle

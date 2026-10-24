@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, mockFetch } from '../test/mockFetch'
 import { deferred, renderApp, verifiedMe } from '../test/renderApp'
@@ -225,5 +225,44 @@ describe('Devices', () => {
     renderApp('/devices')
     const offlineCard = await screen.findByRole('article', { name: 'Old Galaxy' })
     expect(within(offlineCard).getByText(/last seen just now/i)).toBeInTheDocument()
+  })
+})
+
+describe('Devices: resilience and layout', () => {
+  it('keeps the list when a background refetch fails', async () => {
+    const m = mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices() } },
+    ])
+    const { queryClient } = renderApp('/devices')
+    await screen.findByRole('article', { name: 'Pixel 8' })
+
+    m.use({ path: '/app/devices', ...apiError(500, 'internal') })
+    await act(() => queryClient.refetchQueries({ queryKey: ['devices'] }))
+    expect(queryClient.getQueryState(['devices'])?.status).toBe('error')
+    // Let the query observers' batched notification reach React.
+    await act(() => new Promise((r) => setTimeout(r, 20)))
+    expect(screen.getByRole('article', { name: 'Pixel 8' })).toBeInTheDocument()
+    expect(screen.queryByText(/couldn’t load your devices/i)).not.toBeInTheDocument()
+  })
+
+  // Regression (320px phones): an untruncated device ID widened the card and
+  // the page past the viewport. Every box between the grid and the ID must
+  // be allowed to shrink, and the ID must truncate.
+  it('lets the device ID truncate inside a shrinkable card', async () => {
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: devices() } },
+    ])
+    renderApp('/devices')
+    const article = await screen.findByRole('article', { name: 'Pixel 8' })
+    const id = within(article).getByTestId('device-id')
+    expect(id).toHaveClass('truncate', 'min-w-0')
+
+    const list = article.closest('ul')!
+    expect(list).toHaveClass('grid-cols-1')
+    for (let el = id.parentElement; el && el !== list; el = el.parentElement) {
+      expect(el, `<${el.tagName.toLowerCase()} class="${el.className}">`).toHaveClass('min-w-0')
+    }
   })
 })

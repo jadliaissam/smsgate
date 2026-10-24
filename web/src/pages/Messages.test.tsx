@@ -394,3 +394,25 @@ describe('Messages', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
+
+describe('Messages: device names', () => {
+  it('says "Removed device" only once the devices list is loaded', async () => {
+    const gate = deferred()
+    mockFetch([
+      { path: '/app/me', json: verifiedMe },
+      { path: '/app/devices', json: { data: [devices[0]] }, until: gate.promise },
+      { path: '/app/messages?limit=50', json: { data: [msg('m1'), msg('m3', { device_id: D2 })] } },
+    ])
+    renderApp('/messages')
+
+    await screen.findByRole('list', { name: 'Messages' })
+    expect(rowsOf()).toHaveLength(2)
+    expect(screen.queryByText('Removed device')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Device not loaded')).toHaveLength(2)
+
+    gate.resolve()
+    expect(await screen.findByText('Removed device')).toBeInTheDocument()
+    expect(within(rowsOf()[0]!).getByText('Pixel 8')).toBeInTheDocument()
+    expect(screen.queryByText('Device not loaded')).not.toBeInTheDocument()
+  })
+})

@@ -60,8 +60,6 @@ export interface CreatedApiKey extends ApiKey {
 
 export type MessageStatus = 'queued' | 'dispatched' | 'sent' | 'delivered' | 'failed' | 'expired'
 
-export const terminalStatuses: readonly MessageStatus[] = ['delivered', 'failed', 'expired']
-
 /** GET /app/messages item (body is never returned by the list/get API). */
 export interface Message {
   id: string

@@ -99,11 +99,6 @@ export const MessageIcon = (p: IconProps) => (
     <path d="M8 9.5h8M8 12.5h5" />
   </Svg>
 )
-export const FilterIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M4 6h16M7 12h10M10 18h4" />
-  </Svg>
-)
 export const BookIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 6.5C10.3 5 8 4.5 4.5 4.5v13c3.5 0 5.8.5 7.5 2 1.7-1.5 4-2 7.5-2v-13C16 4.5 13.7 5 12 6.5Z" />
