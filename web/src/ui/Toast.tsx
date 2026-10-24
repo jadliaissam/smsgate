@@ -1,0 +1,143 @@
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { cx, focusRing } from './cx'
+import { AlertIcon, CheckCircleIcon, InfoIcon, XIcon } from './icons'
+import { prefersReducedMotion } from './useOverlay'
+
+export type ToastTone = 'success' | 'error' | 'info'
+
+interface ToastItem {
+  id: number
+  tone: ToastTone
+  title: string
+  description?: string
+  leaving: boolean
+}
+
+export interface ToastApi {
+  show(tone: ToastTone, title: string, description?: string): number
+  success(title: string, description?: string): number
+  error(title: string, description?: string): number
+  info(title: string, description?: string): number
+  dismiss(id: number): void
+}
+
+const ToastContext = createContext<ToastApi | null>(null)
+
+export const TOAST_DURATION_MS = 4000
+const EXIT_MS = 160
+const MAX_VISIBLE = 4
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [items, setItems] = useState<ToastItem[]>([])
+  const nextId = useRef(1)
+  const timers = useRef(new Map<number, number>())
+
+  const remove = useCallback((id: number) => {
+    setItems((list) => list.filter((t) => t.id !== id))
+    timers.current.delete(id)
+  }, [])
+
+  const dismiss = useCallback(
+    (id: number) => {
+      window.clearTimeout(timers.current.get(id))
+      setItems((list) => list.map((t) => (t.id === id ? { ...t, leaving: true } : t)))
+      timers.current.set(
+        id,
+        window.setTimeout(() => remove(id), prefersReducedMotion() ? 0 : EXIT_MS),
+      )
+    },
+    [remove],
+  )
+
+  const show = useCallback(
+    (tone: ToastTone, title: string, description?: string) => {
+      const id = nextId.current++
+      setItems((list) => [...list, { id, tone, title, description, leaving: false }].slice(-MAX_VISIBLE))
+      timers.current.set(
+        id,
+        window.setTimeout(() => dismiss(id), TOAST_DURATION_MS),
+      )
+      return id
+    },
+    [dismiss],
+  )
+
+  useEffect(() => {
+    const map = timers.current
+    return () => map.forEach((t) => window.clearTimeout(t))
+  }, [])
+
+  const api = useMemo<ToastApi>(
+    () => ({
+      show,
+      dismiss,
+      success: (title, description) => show('success', title, description),
+      error: (title, description) => show('error', title, description),
+      info: (title, description) => show('info', title, description),
+    }),
+    [show, dismiss],
+  )
+
+  return (
+    <ToastContext value={api}>
+      {children}
+      {createPortal(
+        <section
+          aria-label="Notifications"
+          aria-live="polite"
+          aria-relevant="additions"
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:right-0 sm:items-end sm:p-6"
+        >
+          {items.map((t) => (
+            <Toast key={t.id} item={t} onDismiss={() => dismiss(t.id)} />
+          ))}
+        </section>,
+        document.body,
+      )}
+    </ToastContext>
+  )
+}
+
+const toneStyles: Record<ToastTone, { icon: typeof InfoIcon; color: string }> = {
+  success: { icon: CheckCircleIcon, color: 'text-success-600 dark:text-success-400' },
+  error: { icon: AlertIcon, color: 'text-danger-600 dark:text-danger-400' },
+  info: { icon: InfoIcon, color: 'text-brand-600 dark:text-brand-400' },
+}
+
+function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
+  const { icon: Icon, color } = toneStyles[item.tone]
+  return (
+    <div
+      role={item.tone === 'error' ? 'alert' : 'status'}
+      className={cx(
+        'pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-border bg-surface-raised/95 p-4 pr-3 shadow-overlay backdrop-blur-md',
+        'motion-reduce:animate-none',
+        item.leaving ? 'animate-toast-out' : 'animate-toast-in',
+      )}
+    >
+      <Icon className={cx('mt-px size-5 shrink-0', color)} />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-fg">{item.title}</p>
+        {item.description && <p className="mt-0.5 text-sm text-fg-muted">{item.description}</p>}
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss notification"
+        className={cx(
+          '-my-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-fg-subtle hover:bg-surface-hover hover:text-fg',
+          focusRing,
+        )}
+      >
+        <XIcon />
+      </button>
+    </div>
+  )
+}
+
+export function useToast(): ToastApi {
+  const ctx = use(ToastContext)
+  if (!ctx) throw new Error('useToast must be used inside <ToastProvider>')
+  return ctx
+}
