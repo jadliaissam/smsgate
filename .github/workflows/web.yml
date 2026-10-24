@@ -70,7 +70,10 @@ jobs:
 
       - name: image reference
         id: ref
-        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/smsgate-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        # Image names must be lowercase; the owner may not be.
+        run: |
+          base="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/smsgate-web"
+          { echo "ref=$base:$GITHUB_SHA"; echo "latest=$base:latest"; } >> "$GITHUB_OUTPUT"
 
       - name: build and push
         uses: docker/build-push-action@v6
@@ -78,9 +81,10 @@ jobs:
           context: web
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          build-args: REVISION=${{ github.sha }}
           tags: |
             ${{ steps.ref.outputs.ref }}
-            ghcr.io/${{ github.repository_owner }}/smsgate-web:latest
+            ${{ steps.ref.outputs.latest }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -89,11 +93,14 @@ jobs:
 
   deploy:
     # CapRover only pulls the image built above and runs it; nothing is built
-    # on the server. The GHCR package must be public (or CapRover must have a
-    # registry login for ghcr.io) so the server can pull it.
+    # on the server. CapRover needs a registry login for ghcr.io (Cluster ->
+    # Docker Registry; a PAT with read:packages) unless the package is public.
+    # The CLI returns before the new container is up, so the job then waits
+    # until the public site reports this commit as its revision.
     # Required repository settings:
     #   secrets.CAPROVER_URL        e.g. https://captain.example.com
     #   secrets.CAPROVER_WEB_APP_TOKEN  app: Deployment -> "Enable App Token"
+    #   vars.PUBLIC_WEB_URL         public web origin (default below)
     #   vars.CAPROVER_WEB_APP           CapRover app name
     needs: image
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -122,3 +129,20 @@ jobs:
             --appToken "$APP_TOKEN" \
             --appName "$APP_NAME" \
             --imageName "$IMAGE"
+
+      - name: wait until the new revision is serving
+        env:
+          URL: ${{ vars.PUBLIC_WEB_URL || 'https://smsgate-web.captain-1.duckdns.org' }}
+        run: |
+          URL="${URL%/}"
+          live=
+          for _ in $(seq 1 60); do
+            live=$(curl -fsS --max-time 10 "$URL/revision.txt" 2>/dev/null | tr -d '[:space:]') || live=
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "revision $GITHUB_SHA is live"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::deploy not confirmed: after 5 minutes /revision.txt reports revision '${live:-unreachable}', expected $GITHUB_SHA"
+          exit 1

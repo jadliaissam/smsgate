@@ -57,7 +57,7 @@ func (s *Service) counts(r *http.Request, since time.Time) (map[string]int64, in
 func (s *Service) stats(w http.ResponseWriter, r *http.Request) error {
 	now := s.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	since := now.Add(-24 * time.Hour)
+	since := now.Add(-24 * time.Hour).Truncate(time.Second)
 
 	plan, err := s.q.GetUserPlan(r.Context(), accounts.UserID(r.Context()))
 	if err != nil {

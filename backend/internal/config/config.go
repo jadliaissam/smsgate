@@ -24,6 +24,7 @@ type Config struct {
 	Addr        string
 	DatabaseURL string
 	Env         string
+	Revision    string // build revision (git sha) reported by /healthz
 	PublicURL   string
 	LogLevel    slog.Level
 
@@ -104,6 +105,7 @@ func Default() Config {
 	return Config{
 		Addr:     ":8080",
 		Env:      "prod",
+		Revision: "dev",
 		LogLevel: slog.LevelInfo,
 
 		DBMaxConns:    10,
@@ -191,6 +193,7 @@ func (l *loader) config() (Config, error) {
 	c.Addr = l.str("HTTP_ADDR", c.Addr)
 	c.DatabaseURL = l.str("DATABASE_URL", "")
 	c.Env = l.str("APP_ENV", c.Env)
+	c.Revision = l.str("APP_REVISION", c.Revision)
 	defPublic := c.PublicURL
 	if c.Env == "dev" {
 		defPublic = devPublicURL
