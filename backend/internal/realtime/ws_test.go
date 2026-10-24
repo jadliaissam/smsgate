@@ -214,7 +214,7 @@ func TestWSStaleMarkUsesFCM(t *testing.T) {
 }
 
 func TestWSFCMFallback(t *testing.T) {
-	a := apptest.New(t, func(c *config.Config) { c.WSFCMFallback = 30 * time.Millisecond })
+	a := apptest.New(t, func(c *config.Config) { c.WSFCMFallback = 300 * time.Millisecond })
 	f := setup(t, a)
 	c := dial(t, a, f.tok)
 
@@ -224,7 +224,7 @@ func TestWSFCMFallback(t *testing.T) {
 	if r, m := a.Do("POST", "/device/v1/messages/"+id+"/claim", nil, "Authorization", "Bearer "+f.tok); r.StatusCode != 200 {
 		t.Fatalf("claim: %d %v", r.StatusCode, m)
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond) // twice the fallback
 	if n := len(a.Waker.Calls()); n != 0 {
 		t.Fatalf("FCM for a claimed message: %d", n)
 	}

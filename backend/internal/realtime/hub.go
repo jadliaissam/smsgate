@@ -317,6 +317,9 @@ func (c *conn) enqueue(f outFrame) bool {
 		return false
 	}
 	c.q = append(c.q, f)
+	if f.code != 0 {
+		c.closed = true // a close frame is the last thing this socket gets: later frames are refused
+	}
 	start := !c.draining
 	c.draining = true
 	c.qmu.Unlock()

@@ -22,6 +22,11 @@ const (
 	ChanWS     = "smsgate_ws"     // "<device_id>:<conn_id>:<seq>" (socket opened)
 )
 
+const (
+	setupTimeout = 10 * time.Second // connecting and LISTENing; a blackholed database must not stall the loop
+	healthyAfter = 30 * time.Second // a session this old counts as healthy: the reconnect backoff restarts
+)
+
 // Listener bridges Postgres notifications to a Hub over one dedicated
 // connection (outside the pool). It reconnects with jittered exponential
 // backoff. Notifications sent while it was down are lost, so after each
@@ -60,6 +65,7 @@ func (l *Listener) Run(ctx context.Context) {
 	const retryMin = 500 * time.Millisecond
 	backoff := min(retryMin, l.retryMax)
 	for {
+		started := time.Now()
 		listened, err := l.session(ctx)
 		if ctx.Err() != nil {
 			return
@@ -67,7 +73,7 @@ func (l *Listener) Run(ctx context.Context) {
 		if l.lostAt.IsZero() { // anything sent after the last healthy moment may be lost
 			l.lostAt = l.alive
 		}
-		if listened {
+		if listened && time.Since(started) > healthyAfter { // a session that dies right after LISTEN keeps backing off
 			backoff = min(retryMin, l.retryMax)
 		}
 		wait := backoff/2 + rand.N(backoff/2+1)
@@ -85,17 +91,19 @@ func (l *Listener) Run(ctx context.Context) {
 // the server whenever it has been idle for pingInterval so a dead connection
 // is noticed. It reports whether LISTEN succeeded.
 func (l *Listener) session(ctx context.Context) (bool, error) {
-	conn, err := pgx.ConnectConfig(ctx, l.cfg)
+	cctx, cancel := context.WithTimeout(ctx, setupTimeout)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(cctx, l.cfg)
 	if err != nil {
 		return false, err
 	}
 	defer func() {
-		cctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		_ = conn.Close(cctx)
-		cancel()
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
+		_ = conn.Close(closeCtx)
+		closeCancel()
 	}()
 	for _, ch := range []string{ChanWake, ChanRevoke, ChanWS} {
-		if _, err := conn.Exec(ctx, "LISTEN "+ch); err != nil {
+		if _, err := conn.Exec(cctx, "LISTEN "+ch); err != nil {
 			return false, err
 		}
 	}
