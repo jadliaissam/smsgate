@@ -163,7 +163,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 59 {
+	if len(v) != 60 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }

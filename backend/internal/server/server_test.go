@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/smsgate/backend/internal/apptest"
+	"github.com/smsgate/backend/internal/config"
 )
 
 func TestHealthz(t *testing.T) {
-	a := apptest.New(t)
+	a := apptest.New(t, func(c *config.Config) { c.Revision = "abc123" })
 	resp, body := a.Do("GET", "/healthz", nil)
-	if resp.StatusCode != 200 || body["ok"] != true {
+	if resp.StatusCode != 200 || body["ok"] != true || body["revision"] != "abc123" {
 		t.Fatalf("%d %v", resp.StatusCode, body)
 	}
 	if resp.Header.Get("X-Request-Id") == "" {

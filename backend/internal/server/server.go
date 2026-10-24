@@ -28,7 +28,8 @@ type Deps struct {
 	Now    func() time.Time
 	Mailer accounts.Mailer
 	// Messages is optional; when nil New builds one. Callers that need to wait
-	// for in-flight wake goroutines (shutdown, tests) supply their own and call Wait.
+	// for in-flight wake goroutines (shutdown, tests) supply their own and call
+	// Wait. New sets its Now to Deps.Now (time.Now when nil).
 	Messages *messages.Service
 }
 
@@ -44,13 +45,16 @@ func New(d Deps) http.Handler {
 		d.Mailer = accounts.LogMailer{Log: d.Log}
 	}
 	mux := http.NewServeMux()
+	// The revision lets a deploy confirm the new build is the one serving.
+	health := struct {
+		OK       bool   `json:"ok"`
+		Revision string `json:"revision"`
+	}{true, d.Cfg.Revision}
 	mux.Handle("GET /healthz", httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
 		if err := d.Pool.Ping(r.Context()); err != nil {
 			return err
 		}
-		return httpx.JSON(w, http.StatusOK, struct {
-			OK bool `json:"ok"`
-		}{true})
+		return httpx.JSON(w, http.StatusOK, health)
 	}))
 	q := dbq.New(d.Pool)
 	hasher := secret.NewHasher(d.Cfg.Argon2)

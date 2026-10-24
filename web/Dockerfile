@@ -19,6 +19,10 @@ COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY nginx/security.conf nginx/proxy.conf /etc/nginx/snippets/
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN mkdir -p /usr/share/nginx/downloads
+# Git sha of the build (CI passes it), served at /revision.txt so a deploy can
+# confirm the new image is the one serving. Last, so it doesn't bust the cache.
+ARG REVISION=dev
+RUN printf '%s\n' "$REVISION" > /usr/share/nginx/html/revision.txt
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q --spider http://127.0.0.1/ || exit 1
