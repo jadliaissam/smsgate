@@ -199,7 +199,15 @@ export function MessageDrawer({ open, onClose, message: m, deviceName }: Message
                 </span>
               </Detail>
               <Detail label="Device">
-                {deviceName ?? <span className="text-fg-subtle">{deviceName === null ? 'Removed device' : '—'}</span>}
+                {deviceName ??
+                  (deviceName === null ? (
+                    <span className="text-fg-subtle">Removed device</span>
+                  ) : (
+                    <span className="text-fg-subtle">
+                      <span aria-hidden="true">—</span>
+                      <span className="sr-only">Device not loaded</span>
+                    </span>
+                  ))}
               </Detail>
               <Detail label="SIM">{m.sim_slot === null ? 'Phone default' : `SIM ${m.sim_slot + 1}`}</Detail>
               <Detail label="Expires">
