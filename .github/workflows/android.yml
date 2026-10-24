@@ -38,16 +38,16 @@ jobs:
         run: node --test 'android/scripts/*.test.mjs'
 
       # google-services.json is private: CI writes it from a secret. Secrets are
-      # not available to pull requests from forks, so those skip the Gradle build.
+      # not available to fork pull requests or Dependabot runs, so those skip the Gradle build.
       - name: write google-services.json
         id: gs
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
-          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          NO_SECRETS: ${{ github.actor == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            if [ "$FORK_PR" = "true" ]; then
-              echo "::notice::GOOGLE_SERVICES_JSON_BASE64 is not available to fork pull requests; skipping the Gradle build."
+            if [ "$NO_SECRETS" = "true" ]; then
+              echo "::notice::GOOGLE_SERVICES_JSON_BASE64 is not available to fork pull requests or Dependabot; skipping the Gradle build."
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -66,7 +66,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         if: steps.gs.outputs.skip != 'true'
         with:
-          packages: "platforms;android-36 build-tools;36.0.0"
+          packages: "platforms;android-37.0 build-tools;37.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         if: steps.gs.outputs.skip != 'true'
@@ -120,7 +120,7 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-36 build-tools;36.0.0"
+          packages: "platforms;android-37.0 build-tools;37.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -138,14 +138,21 @@ jobs:
           # No configuration cache: keeps the signing secrets out of cached build state.
           ./gradlew --no-configuration-cache assembleRelease
           apk=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
           cp "$apk" "$GITHUB_WORKSPACE/smsgate.apk"
+          cp app/build/outputs/mapping/release/mapping.txt "$GITHUB_WORKSPACE/mapping-$GITHUB_REF_NAME.txt"
           rm -f "$RUNNER_TEMP/release.jks"
 
       - name: publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # The R8 mapping file is attached so crash stack traces can be de-obfuscated.
         run: |
-          gh release create "$GITHUB_REF_NAME" smsgate.apk \
-            --title "SMSGate Android ${GITHUB_REF_NAME#android-v}" \
-            --generate-notes
+          assets=(smsgate.apk "mapping-$GITHUB_REF_NAME.txt")
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "SMSGate Android ${GITHUB_REF_NAME#android-v}" \
+              --generate-notes
+          fi

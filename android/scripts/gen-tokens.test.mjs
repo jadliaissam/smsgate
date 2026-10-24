@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { CSS_PATH, generate, oklchToRgba, parseColor, readTokens } from './gen-tokens.mjs'
+import { CSS_PATH, SPACES, generate, oklchToLinear, oklchToRgba, parseColor, readTokens } from './gen-tokens.mjs'
 
 const hex = (s) => ({ r: parseInt(s.slice(1, 3), 16), g: parseInt(s.slice(3, 5), 16), b: parseInt(s.slice(5, 7), 16) })
 function near(actual, expected, label) {
@@ -21,6 +21,25 @@ test('known OKLCH → sRGB conversions (±1 per channel)', () => {
   near(oklchToRgba(0.511, 0.262, 276.966), '#4F39F6', 'indigo-600 (out of gamut)')
   near(oklchToRgba(1, 0, 0), '#FFFFFF', 'white')
   near(oklchToRgba(0, 0, 0), '#000000', 'black')
+})
+
+test('Display P3 values for colours outside sRGB', () => {
+  assert.equal(oklchToRgba(0.55, 0.22, 278).p3, undefined, 'brand-600 is inside sRGB: no p3 value')
+  // color(display-p3 1 0 0) = oklch(0.6486 0.2995 28.96): outside sRGB.
+  const red = oklchToRgba(0.64857, 0.29948, 28.956)
+  assert.ok(red.p3, 'p3 value present')
+  near({ r: red.p3[0], g: red.p3[1], b: red.p3[2] }, '#FF0000', 'p3 red')
+  // CSS Color 4: color(srgb 1 0 0) = color(display-p3 0.9175 0.2003 0.1386).
+  const toP3 = (lch) => oklchToLinear(lch, SPACES.p3)
+  for (const [i, v] of toP3([0.62796, 0.25768, 29.2339]).entries())
+    assert.ok(Math.abs(v - [0.9175, 0.2003, 0.1386].map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4))[i]) < 0.002)
+})
+
+test('dark roles must exist in the light theme', () => {
+  const css = `@theme { --color-white: oklch(1 0 0); --color-canvas: var(--color-white); }
+    :root { --shadow-ring: oklch(0 0 0 / 0.1); }
+    .dark { --color-canvas: oklch(0 0 0); --color-mystery: oklch(0.5 0 0); }`
+  assert.throws(() => readTokens(css), /lacks: mystery/)
 })
 
 test('alpha, percentages and var() references', () => {

@@ -4,16 +4,17 @@ package com.jassam.smsgate.ui.theme
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.colorspace.ColorSpaces
 
 /** Raw palettes (same steps as the dashboard). UI code uses [SemanticColors] where a role exists. */
 object Palette {
     val White = Color(0xFFFFFFFF) // #FFFFFF
     val Black = Color(0xFF000000) // #000000
-    val Brand50 = Color(0xFFF3F4FF) // #F3F4FF
-    val Brand100 = Color(0xFFE7EAFF) // #E7EAFF
-    val Brand200 = Color(0xFFD1D7FF) // #D1D7FF
-    val Brand300 = Color(0xFFB1BAFF) // #B1BAFF
-    val Brand400 = Color(0xFF8B94FF) // #8B94FF
+    val Brand50 = Color(0.9529f, 0.9569f, 1.0000f, 1.0000f, ColorSpaces.DisplayP3) // #F3F4FF in sRGB; P3 #F3F4FF
+    val Brand100 = Color(0.9059f, 0.9176f, 1.0000f, 1.0000f, ColorSpaces.DisplayP3) // #E7EAFF in sRGB; P3 #E7EAFF
+    val Brand200 = Color(0.8235f, 0.8392f, 1.0000f, 1.0000f, ColorSpaces.DisplayP3) // #D1D7FF in sRGB; P3 #D2D6FF
+    val Brand300 = Color(0.7020f, 0.7255f, 1.0000f, 1.0000f, ColorSpaces.DisplayP3) // #B1BAFF in sRGB; P3 #B3B9FF
+    val Brand400 = Color(0.5529f, 0.5804f, 0.9922f, 1.0000f, ColorSpaces.DisplayP3) // #8B94FF in sRGB; P3 #8D94FD
     val Brand500 = Color(0xFF6F71FB) // #6F71FB
     val Brand600 = Color(0xFF5B56ED) // #5B56ED
     val Brand700 = Color(0xFF4B42CD) // #4B42CD
@@ -37,33 +38,33 @@ object Palette {
     val Success100 = Color(0xFFD0FAE5) // #D0FAE5
     val Success200 = Color(0xFFA4F4CF) // #A4F4CF
     val Success300 = Color(0xFF5EE9B5) // #5EE9B5
-    val Success400 = Color(0xFF00D491) // #00D491
-    val Success500 = Color(0xFF00BC7D) // #00BC7D
-    val Success600 = Color(0xFF009965) // #009965
-    val Success700 = Color(0xFF007A55) // #007A55
-    val Success800 = Color(0xFF006045) // #006045
-    val Success900 = Color(0xFF004F3B) // #004F3B
-    val Success950 = Color(0xFF002C22) // #002C22
-    val Warning50 = Color(0xFFFFFBEB) // #FFFBEB
+    val Success400 = Color(0.3373f, 0.8196f, 0.5882f, 1.0000f, ColorSpaces.DisplayP3) // #00D491 in sRGB; P3 #56D196
+    val Success500 = Color(0.2667f, 0.7255f, 0.5098f, 1.0000f, ColorSpaces.DisplayP3) // #00BC7D in sRGB; P3 #44B982
+    val Success600 = Color(0.2078f, 0.5882f, 0.4118f, 1.0000f, ColorSpaces.DisplayP3) // #009965 in sRGB; P3 #359669
+    val Success700 = Color(0.1647f, 0.4706f, 0.3451f, 1.0000f, ColorSpaces.DisplayP3) // #007A55 in sRGB; P3 #2A7858
+    val Success800 = Color(0.1333f, 0.3725f, 0.2784f, 1.0000f, ColorSpaces.DisplayP3) // #006045 in sRGB; P3 #225F47
+    val Success900 = Color(0.1176f, 0.3020f, 0.2353f, 1.0000f, ColorSpaces.DisplayP3) // #004F3B in sRGB; P3 #1E4D3C
+    val Success950 = Color(0.0549f, 0.1686f, 0.1333f, 1.0000f, ColorSpaces.DisplayP3) // #002C22 in sRGB; P3 #0E2B22
+    val Warning50 = Color(0.9961f, 0.9843f, 0.9255f, 1.0000f, ColorSpaces.DisplayP3) // #FFFBEB in sRGB; P3 #FEFBEC
     val Warning100 = Color(0xFFFEF3C6) // #FEF3C6
     val Warning200 = Color(0xFFFEE685) // #FEE685
-    val Warning300 = Color(0xFFFFD230) // #FFD230
-    val Warning400 = Color(0xFFFFB900) // #FFB900
-    val Warning500 = Color(0xFFFD9A00) // #FD9A00
-    val Warning600 = Color(0xFFE17100) // #E17100
-    val Warning700 = Color(0xFFBB4D00) // #BB4D00
-    val Warning800 = Color(0xFF973C00) // #973C00
+    val Warning300 = Color(0.9725f, 0.8314f, 0.3333f, 1.0000f, ColorSpaces.DisplayP3) // #FFD230 in sRGB; P3 #F8D455
+    val Warning400 = Color(0.9608f, 0.7373f, 0.1176f, 1.0000f, ColorSpaces.DisplayP3) // #FFB900 in sRGB; P3 #F5BC1E
+    val Warning500 = Color(0.9412f, 0.6196f, 0.0588f, 1.0000f, ColorSpaces.DisplayP3) // #FD9A00 in sRGB; P3 #F09E0F
+    val Warning600 = Color(0.8275f, 0.4667f, 0.0353f, 1.0000f, ColorSpaces.DisplayP3) // #E17100 in sRGB; P3 #D37709
+    val Warning700 = Color(0.6784f, 0.3294f, 0.0510f, 1.0000f, ColorSpaces.DisplayP3) // #BB4D00 in sRGB; P3 #AD540D
+    val Warning800 = Color(0.5490f, 0.2549f, 0.0745f, 1.0000f, ColorSpaces.DisplayP3) // #973C00 in sRGB; P3 #8C4113
     val Warning900 = Color(0xFF7B3306) // #7B3306
     val Warning950 = Color(0xFF461901) // #461901
     val Danger50 = Color(0xFFFFF1F2) // #FFF1F2
-    val Danger100 = Color(0xFFFFE4E6) // #FFE4E6
-    val Danger200 = Color(0xFFFFCCD3) // #FFCCD3
-    val Danger300 = Color(0xFFFFA1AD) // #FFA1AD
-    val Danger400 = Color(0xFFFF637E) // #FF637E
-    val Danger500 = Color(0xFFFF2057) // #FF2057
-    val Danger600 = Color(0xFFEC003F) // #EC003F
-    val Danger700 = Color(0xFFC70036) // #C70036
-    val Danger800 = Color(0xFFA50036) // #A50036
+    val Danger100 = Color(0.9804f, 0.8980f, 0.9020f, 1.0000f, ColorSpaces.DisplayP3) // #FFE4E6 in sRGB; P3 #FAE5E6
+    val Danger200 = Color(0.9686f, 0.8078f, 0.8275f, 1.0000f, ColorSpaces.DisplayP3) // #FFCCD3 in sRGB; P3 #F7CED3
+    val Danger300 = Color(0.9608f, 0.6471f, 0.6824f, 1.0000f, ColorSpaces.DisplayP3) // #FFA1AD in sRGB; P3 #F5A5AE
+    val Danger400 = Color(0.9412f, 0.4314f, 0.5020f, 1.0000f, ColorSpaces.DisplayP3) // #FF637E in sRGB; P3 #F06E80
+    val Danger500 = Color(0.9216f, 0.2392f, 0.3569f, 1.0000f, ColorSpaces.DisplayP3) // #FF2057 in sRGB; P3 #EB3D5B
+    val Danger600 = Color(0.8471f, 0.1020f, 0.2706f, 1.0000f, ColorSpaces.DisplayP3) // #EC003F in sRGB; P3 #D81A45
+    val Danger700 = Color(0.7137f, 0.0784f, 0.2275f, 1.0000f, ColorSpaces.DisplayP3) // #C70036 in sRGB; P3 #B6143A
+    val Danger800 = Color(0.5922f, 0.0941f, 0.2196f, 1.0000f, ColorSpaces.DisplayP3) // #A50036 in sRGB; P3 #971838
     val Danger900 = Color(0xFF8B0836) // #8B0836
     val Danger950 = Color(0xFF4D0218) // #4D0218
 }

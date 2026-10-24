@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 
 /** Light, dark, or follow the system (manual override from settings). */
 enum class ThemeMode { System, Light, Dark }
@@ -48,7 +49,7 @@ private fun lightScheme(r: SemanticColors): ColorScheme = lightColorScheme(
     onSurface = r.fg,
     surfaceVariant = r.surfaceSunken,
     onSurfaceVariant = r.fgMuted,
-    surfaceTint = Palette.Brand600,
+    surfaceTint = Color.Transparent, // the dashboard never tints surfaces
     inverseSurface = Palette.Ink900,
     inverseOnSurface = Palette.Ink50,
     error = Palette.Danger600,
@@ -87,7 +88,7 @@ private fun darkScheme(r: SemanticColors): ColorScheme = darkColorScheme(
     onSurface = r.fg,
     surfaceVariant = r.surfaceRaised,
     onSurfaceVariant = r.fgMuted,
-    surfaceTint = Palette.Brand500,
+    surfaceTint = Color.Transparent,
     inverseSurface = Palette.Ink100,
     inverseOnSurface = Palette.Ink900,
     error = Palette.Danger500,

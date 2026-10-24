@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
@@ -11,8 +13,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SmsGate">
 
+        <!-- Wide colour gamut (API 26+): the generated Display P3 tokens show the dashboard's
+             saturation on P3 screens; sRGB screens get the mapped sRGB value. -->
         <activity
             android:name=".ui.MainActivity"
+            android:colorMode="wideColorGamut"
+            tools:targetApi="26"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -20,5 +26,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- App Startup (D10): WorkManager is initialised on demand through App's
+             Configuration.Provider; EmojiCompat (downloadable emoji font) is not needed.
+             Kept: ProfileInstaller, ProcessLifecycle and OkHttp's context initializer (cheap). -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove" />
+        </provider>
     </application>
 </manifest>

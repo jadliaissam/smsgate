@@ -5,9 +5,13 @@
 //   node android/scripts/gen-tokens.mjs          write Tokens.kt and res/values*/tokens.xml
 //   node android/scripts/gen-tokens.mjs --check  exit 1 if any of them is stale
 //
-// No dependencies. OKLCH values are converted to sRGB with the CSS Color 4
-// gamut-mapping algorithm (chroma reduction in OKLCH), the same result a
-// browser shows on an sRGB screen.
+// No dependencies. Every colour gets an sRGB value, made with the CSS Color 4
+// gamut-mapping algorithm (chroma reduction in OKLCH; the method behind
+// Tailwind's published hex fallbacks). Browsers on sRGB screens clamp channels
+// instead, which differs by a few units only for the most saturated steps.
+// Colours outside sRGB also get a Display P3 value (gamut-mapped to P3), so
+// wide-gamut phones show the same saturation as the dashboard on a P3 screen;
+// Android converts it back to sRGB on sRGB-only screens.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -54,29 +58,55 @@ const inGamut = (rgb, eps = 1e-6) => rgb.every((v) => v >= -eps && v <= 1 + eps)
 const clip = (rgb) => rgb.map((v) => Math.min(1, Math.max(0, v)))
 const deltaEOK = (x, y) => Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2])
 
-/** CSS Color 4 §13.2 gamut mapping (OKLCH chroma reduction) to linear sRGB in [0, 1]. */
-export function oklchToLinearSrgb([l, c, h]) {
+// Linear sRGB ↔ linear Display P3 (both D65; P3 uses the sRGB transfer curve).
+const SRGB_TO_P3 = [
+  [0.8224621209, 0.1775378791, 0],
+  [0.0331941989, 0.9668058011, 0],
+  [0.0170826307, 0.0723974407, 0.9105199286],
+]
+const P3_TO_SRGB = [
+  [1.2249401763, -0.2249401763, 0],
+  [-0.0420569547, 1.0420569547, 0],
+  [-0.0196375546, -0.0786360456, 1.0982736002],
+]
+const mul = (m, v) => m.map((row) => row[0] * v[0] + row[1] * v[1] + row[2] * v[2])
+
+/** A target RGB space: from/to linear sRGB (the OKLab matrices' native space). */
+export const SPACES = {
+  srgb: { fromSrgb: (v) => v, toSrgb: (v) => v },
+  p3: { fromSrgb: (v) => mul(SRGB_TO_P3, v), toSrgb: (v) => mul(P3_TO_SRGB, v) },
+}
+
+const lchToLinear = (lch, space) => space.fromSrgb(oklabToLinearSrgb(oklchToOklab(lch)))
+const linearToOklab = (rgb, space) => linearSrgbToOklab(space.toSrgb(rgb))
+
+/** True when oklch(l c h) lies inside `space` without mapping. */
+export function oklchInGamut([l, c, h], space = SPACES.srgb) {
+  return l >= 1 || l <= 0 || inGamut(lchToLinear([l, c, h], space))
+}
+
+/** CSS Color 4 §13.2 gamut mapping (OKLCH chroma reduction) to linear RGB of `space`, in [0, 1]. */
+export function oklchToLinear([l, c, h], space = SPACES.srgb) {
   if (l >= 1) return [1, 1, 1]
   if (l <= 0) return [0, 0, 0]
-  const lin = (lch) => oklabToLinearSrgb(oklchToOklab(lch))
-  const origin = lin([l, c, h])
+  const origin = lchToLinear([l, c, h], space)
   if (inGamut(origin)) return clip(origin)
   const JND = 0.02
   const EPS = 0.0001
   let clipped = clip(origin)
-  if (deltaEOK(linearSrgbToOklab(clipped), oklchToOklab([l, c, h])) < JND) return clipped
+  if (deltaEOK(linearToOklab(clipped, space), oklchToOklab([l, c, h])) < JND) return clipped
   let min = 0
   let max = c
   let minInGamut = true
   while (max - min > EPS) {
     const chroma = (min + max) / 2
-    const current = lin([l, chroma, h])
+    const current = lchToLinear([l, chroma, h], space)
     if (minInGamut && inGamut(current)) {
       min = chroma
       continue
     }
     clipped = clip(current)
-    const e = deltaEOK(linearSrgbToOklab(clipped), oklchToOklab([l, chroma, h]))
+    const e = deltaEOK(linearToOklab(clipped, space), oklchToOklab([l, chroma, h]))
     if (e < JND) {
       if (JND - e < EPS) return clipped
       minInGamut = false
@@ -88,10 +118,17 @@ export function oklchToLinearSrgb([l, c, h]) {
   return clipped
 }
 
-/** oklch(L C H [/ A]) → { r, g, b, a } with 8-bit channels. L may be a percentage. */
+const to8 = (v) => Math.round(gamma(v) * 255)
+
+/**
+ * oklch(L C H [/ A]) → { r, g, b, a } (8-bit sRGB) plus, when the colour is
+ * outside sRGB, `p3: [r, g, b]` (8-bit Display P3).
+ */
 export function oklchToRgba(l, c, h, alpha = 1) {
-  const [r, g, b] = oklchToLinearSrgb([l, c, h]).map((v) => Math.round(gamma(v) * 255))
-  return { r, g, b, a: Math.round(alpha * 255) }
+  const [r, g, b] = oklchToLinear([l, c, h]).map(to8)
+  const out = { r, g, b, a: Math.round(alpha * 255) }
+  if (!oklchInGamut([l, c, h])) out.p3 = oklchToLinear([l, c, h], SPACES.p3).map(to8)
+  return out
 }
 
 export function rgbaToHex({ r, g, b, a }) {
@@ -166,7 +203,10 @@ export function readTokens(css) {
     return out
   }
   const light = roles({ ...theme, ...root })
-  const darkRoles = roles(dark, light) // .dark overrides only some roles; the rest inherit
+  const darkOnly = roles(dark)
+  const unknown = Object.keys(darkOnly).filter((k) => !(k in light))
+  if (unknown.length) throw new Error(`.dark defines roles the light theme lacks: ${unknown.join(', ')}`)
+  const darkRoles = { ...light, ...darkOnly } // .dark overrides only some roles; the rest inherit
   if (Object.keys(palette).length === 0 || Object.keys(light).length === 0) throw new Error('no tokens found')
   return { palette, light, dark: darkRoles }
 }
@@ -178,8 +218,12 @@ const camel = (s) => {
   const p = pascal(s)
   return p[0].toLowerCase() + p.slice(1)
 }
-const kColor = ({ r, g, b, a }) =>
-  `Color(0x${[a, r, g, b].map((n) => n.toString(16).padStart(2, '0').toUpperCase()).join('')})`
+const f4 = (n) => `${(n / 255).toFixed(4)}f`
+const kColor = ({ r, g, b, a, p3 }) =>
+  p3
+    ? `Color(${p3.map(f4).join(', ')}, ${f4(a)}, ColorSpaces.DisplayP3)`
+    : `Color(0x${[a, r, g, b].map((n) => n.toString(16).padStart(2, '0').toUpperCase()).join('')})`
+const kComment = (c) => (c.p3 ? `${rgbaToHex(c)} in sRGB; P3 ${rgbaToHex({ r: c.p3[0], g: c.p3[1], b: c.p3[2], a: c.a })}` : rgbaToHex(c))
 
 export function renderKotlin({ palette, light, dark }) {
   const roleNames = Object.keys(light)
@@ -190,10 +234,11 @@ export function renderKotlin({ palette, light, dark }) {
   L.push('')
   L.push('import androidx.compose.runtime.Immutable')
   L.push('import androidx.compose.ui.graphics.Color')
+  L.push('import androidx.compose.ui.graphics.colorspace.ColorSpaces')
   L.push('')
   L.push('/** Raw palettes (same steps as the dashboard). UI code uses [SemanticColors] where a role exists. */')
   L.push('object Palette {')
-  for (const [name, c] of Object.entries(palette)) L.push(`    val ${pascal(name)} = ${kColor(c)} // ${rgbaToHex(c)}`)
+  for (const [name, c] of Object.entries(palette)) L.push(`    val ${pascal(name)} = ${kColor(c)} // ${kComment(c)}`)
   L.push('}')
   L.push('')
   L.push('/** Semantic colour roles; light and dark values mirror the dashboard. */')
@@ -207,7 +252,7 @@ export function renderKotlin({ palette, light, dark }) {
   ]) {
     L.push('')
     L.push(`val ${label} = SemanticColors(`)
-    for (const n of roleNames) L.push(`    ${camel(n)} = ${kColor(set[n])}, // ${rgbaToHex(set[n])}`)
+    for (const n of roleNames) L.push(`    ${camel(n)} = ${kColor(set[n])}, // ${kComment(set[n])}`)
     L.push(')')
   }
   return L.join('\n') + '\n'
