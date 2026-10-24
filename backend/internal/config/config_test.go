@@ -68,6 +68,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"SessionCookie", c.SessionCookie, "sg_session"},
 		{"CookieSecure", c.CookieSecure, true},
 		{"EmailTokenTTL", c.EmailTokenTTL, 24 * time.Hour},
+		{"ResendInterval", c.ResendInterval, time.Minute},
 		{"APIKeyTouchInterval", c.APIKeyTouchInterval, time.Minute},
 		{"FCMCredentialsFile", c.FCMCredentialsFile, ""},
 		{"FCMCredentialsJSON", c.FCMCredentialsJSON, ""},
@@ -162,7 +163,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 58 {
+	if len(v) != 59 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -192,6 +193,7 @@ func TestValidate(t *testing.T) {
 		{"SWEEP_INTERVAL", func(c *Config) { c.SweepInterval = 0 }},
 		{"PURGE_INTERVAL", func(c *Config) { c.PurgeInterval = 0 }},
 		{"SESSION_TTL", func(c *Config) { c.SessionTTL = 0 }},
+		{"RESEND_VERIFICATION_INTERVAL", func(c *Config) { c.ResendInterval = 0 }},
 		{"MIGRATE_LOCK_TIMEOUT", func(c *Config) { c.MigrateLockTimeout = 0 }},
 		{"MSG_TTL_MIN", func(c *Config) { c.TTLMin = time.Hour }},
 		{"MSG_TTL_DEFAULT", func(c *Config) { c.TTLDefault = 2 * time.Hour }},

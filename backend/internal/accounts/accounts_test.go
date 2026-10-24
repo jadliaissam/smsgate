@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smsgate/backend/internal/accounts"
 	"github.com/smsgate/backend/internal/apptest"
 	"github.com/smsgate/backend/internal/config"
 )
@@ -205,5 +206,70 @@ func TestNonJSONContentTypeRejected(t *testing.T) {
 		if resp.StatusCode != 415 {
 			t.Fatalf("%s: %d", ct, resp.StatusCode)
 		}
+	}
+}
+
+func TestResendVerification(t *testing.T) {
+	a := apptest.New(t)
+	email := "resend@example.com"
+	a.Do("POST", "/app/signup", map[string]string{"email": email, "password": apptest.Password})
+	resp, _ := a.Do("POST", "/app/login", map[string]string{"email": email, "password": apptest.Password})
+	c := resp.Cookies()[0]
+	first := a.Mailer.Last(email)
+
+	// Within the interval: 204, nothing sent.
+	if r, _ := a.Do("POST", "/app/resend-verification", nil, cookieHdr(c)...); r.StatusCode != 204 {
+		t.Fatalf("early resend %d", r.StatusCode)
+	}
+	if a.Mailer.Last(email) != first {
+		t.Fatal("email sent inside the resend interval")
+	}
+
+	a.Advance(a.Cfg.ResendInterval + time.Second)
+	if r, _ := a.Do("POST", "/app/resend-verification", nil, cookieHdr(c)...); r.StatusCode != 204 {
+		t.Fatalf("resend %d", r.StatusCode)
+	}
+	second := a.Mailer.Last(email)
+	if second == first || a.Mailer.Last(email) == "" {
+		t.Fatal("no new email after the interval")
+	}
+	// Old token is gone; new one verifies.
+	if r, _ := a.Do("POST", "/app/verify", map[string]string{"token": accounts.TokenFrom(first)}); r.StatusCode != 400 {
+		t.Fatalf("old token verify %d", r.StatusCode)
+	}
+	// Second call right after: still 204, nothing sent.
+	if r, _ := a.Do("POST", "/app/resend-verification", nil, cookieHdr(c)...); r.StatusCode != 204 {
+		t.Fatalf("repeat %d", r.StatusCode)
+	}
+	if a.Mailer.Last(email) != second {
+		t.Fatal("email sent twice within the interval")
+	}
+	if r, m := a.Do("POST", "/app/verify", map[string]string{"token": accounts.TokenFrom(second)}); r.StatusCode != 204 {
+		t.Fatalf("new token verify %d %v", r.StatusCode, m)
+	}
+
+	// Verified user: 204, nothing sent.
+	a.Advance(a.Cfg.ResendInterval + time.Second)
+	if r, _ := a.Do("POST", "/app/resend-verification", nil, cookieHdr(c)...); r.StatusCode != 204 {
+		t.Fatalf("verified resend %d", r.StatusCode)
+	}
+	if a.Mailer.Last(email) != second {
+		t.Fatal("email sent to verified user")
+	}
+}
+
+func TestResendVerificationRequiresSession(t *testing.T) {
+	a := apptest.New(t)
+	if r, _ := a.Do("POST", "/app/resend-verification", nil); r.StatusCode != 401 {
+		t.Fatalf("status %d", r.StatusCode)
+	}
+}
+
+func TestResendVerificationRateLimitedPerIP(t *testing.T) {
+	a := apptest.New(t, func(c *config.Config) { c.RLAuthPerMin = 2 })
+	hit := func() int { r, _ := a.Do("POST", "/app/resend-verification", nil); return r.StatusCode }
+	// Rate limiter runs before auth, so unauthenticated hits still count.
+	if hit() != 401 || hit() != 401 || hit() != 429 {
+		t.Fatal("expected 401, 401, 429")
 	}
 }

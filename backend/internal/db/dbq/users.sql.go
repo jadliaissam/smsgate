@@ -84,6 +84,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deleteEmailTokensForUser = `-- name: DeleteEmailTokensForUser :exec
+DELETE FROM email_tokens WHERE user_id = $1
+`
+
+func (q *Queries) DeleteEmailTokensForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteEmailTokensForUser, userID)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1
 `
@@ -151,6 +160,35 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getUserForUpdate = `-- name: GetUserForUpdate :one
+SELECT id, email, password_hash, email_verified_at, plan_id, created_at FROM users WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) GetUserForUpdate(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, getUserForUpdate, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.EmailVerifiedAt,
+		&i.PlanID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const latestEmailTokenExpiry = `-- name: LatestEmailTokenExpiry :one
+SELECT expires_at FROM email_tokens WHERE user_id = $1 ORDER BY expires_at DESC LIMIT 1
+`
+
+func (q *Queries) LatestEmailTokenExpiry(ctx context.Context, userID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestEmailTokenExpiry, userID)
+	var expires_at time.Time
+	err := row.Scan(&expires_at)
+	return expires_at, err
 }
 
 const markEmailVerified = `-- name: MarkEmailVerified :exec

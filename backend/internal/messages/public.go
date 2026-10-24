@@ -26,6 +26,17 @@ func Routes(mux *http.ServeMux, s *Service, auth, sendLimit func(http.Handler) h
 	mux.Handle("GET /v1/messages", auth(httpx.Handle(s.list)))
 }
 
+// AppRoutes registers the dashboard variants of the same handlers under
+// session auth (accounts.RequireSession). sendLimit wraps only POST /app/messages.
+func AppRoutes(mux *http.ServeMux, s *Service, sess, sendLimit func(http.Handler) http.Handler) {
+	if sendLimit == nil {
+		sendLimit = accounts.Identity
+	}
+	mux.Handle("POST /app/messages", sess(sendLimit(httpx.Handle(s.create))))
+	mux.Handle("GET /app/messages/{id}", sess(httpx.Handle(s.get)))
+	mux.Handle("GET /app/messages", sess(httpx.Handle(s.list)))
+}
+
 type createReq struct {
 	DeviceID   string `json:"device_id"`
 	SIMSlot    *int   `json:"sim_slot"`

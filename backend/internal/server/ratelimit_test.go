@@ -105,3 +105,22 @@ func TestDefaultsEnableRateLimits(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 }
+
+// POST /app/messages shares the send limit, keyed by user id.
+func TestAppSendRateLimitedPerUser(t *testing.T) {
+	a := apptest.New(t, func(c *config.Config) { c.RLSendPerMin = 2 })
+	c := a.Signup(t, "appsend@example.com")
+	dev, _ := a.PairDevice(t, c)
+	ck := []string{"Cookie", c.Name + "=" + c.Value}
+	msg := map[string]any{"device_id": dev.String(), "to": "+37060000000", "body": "hi"}
+	for i := range 2 {
+		if r, m := a.Do("POST", "/app/messages", msg, ck...); r.StatusCode != 202 {
+			t.Fatalf("send %d: %d %v", i, r.StatusCode, m)
+		}
+	}
+	r, m := a.Do("POST", "/app/messages", msg, ck...)
+	limited(t, r, m)
+	if r, m := a.Do("GET", "/app/messages", nil, ck...); r.StatusCode != 200 {
+		t.Fatalf("list: %d %v", r.StatusCode, m)
+	}
+}
