@@ -13,6 +13,8 @@ export interface MockRoute {
   networkError?: boolean
   /** Serve at most once, then fall through to later routes. */
   once?: boolean
+  /** Hold the response until this settles (observe loading states). */
+  until?: Promise<unknown>
 }
 
 export interface RecordedCall {
@@ -70,6 +72,7 @@ export function mockFetch(routes: MockRoute[] = []): FetchMock {
     if (i < 0) throw new Error(`mockFetch: no route for ${method} ${path}`)
     const route = table[i]!
     if (route.once) table.splice(i, 1)
+    if (route.until) await route.until.catch(() => undefined)
     if (route.networkError) throw new TypeError('Failed to fetch')
 
     const status = route.status ?? 200
