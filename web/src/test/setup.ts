@@ -7,6 +7,7 @@ afterEach(() => {
   document.documentElement.className = ''
   try {
     localStorage.clear()
+    sessionStorage.clear()
   } catch {
     // storage unavailable: nothing to reset
   }

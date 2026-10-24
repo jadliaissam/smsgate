@@ -256,7 +256,7 @@ function StepMarker({ index, done, icon }: { index: number; done: boolean; icon:
   return (
     <span className="relative flex size-9 shrink-0 items-center justify-center">
       {done ? (
-        <span className="flex size-9 items-center justify-center rounded-full bg-success-500 text-lg text-white shadow-control animate-pop-in motion-reduce:animate-none">
+        <span className="flex size-9 items-center justify-center rounded-full bg-success-500 text-lg text-fg-on-brand shadow-control animate-pop-in motion-reduce:animate-none">
           <CheckIcon strokeWidth={2.5} />
           <span className="sr-only">Done:</span>
         </span>

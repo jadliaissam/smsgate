@@ -25,10 +25,21 @@ export function authFormErrors(err: unknown): AuthFormErrors {
   return { toast: copy }
 }
 
-/** Only same-origin paths: `//evil.example` or `/\evil` would leave the site. */
-export function safeNext(next: string | undefined): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return '/'
-  return next
+/**
+ * Where to go after signing in: only a URL on our own origin, returned as a
+ * path. Parsing with the URL parser (not prefix checks) catches every form
+ * browsers treat as off-site: `//evil`, `/\evil`, `/<tab>/evil`, `https://evil`.
+ */
+export function safeNext(next: string | undefined, origin: string = window.location.origin): string {
+  if (!next) return '/'
+  let url: URL
+  try {
+    url = new URL(next, origin)
+  } catch {
+    return '/'
+  }
+  if (url.origin !== origin) return '/'
+  return url.pathname + url.search + url.hash
 }
 
 /** Inline text link style for auth cards. */

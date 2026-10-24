@@ -17,11 +17,35 @@ const palette =
   'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose'
 const rawPalette = new RegExp(`\\b[a-z-]+-(?:${palette})-(?:50|[1-9]00|950)\\b`)
 const arbitraryColor = /-\[(?:#|rgb|hsl|oklch|color)/
+// Bare white/black color utilities (any variant prefix or /opacity): use a
+// semantic token such as fg-on-brand instead.
+const bareWhiteBlack = /(?<![\w-])(?:[\w-]+:)*(?:inset-ring|ring|text|bg|border|from|via|to|fill|stroke|outline|shadow|divide|decoration|placeholder|caret|accent)-(?:white|black)(?![\w-])/
+
+// Files owned by a parallel task (W5 devices review) that still use bare
+// white: `it.fails` keeps CI green now and turns red once they are fixed, so
+// the exemption is removed rather than forgotten.
+const pendingWhiteBlack = new Set(['../pages/Devices.tsx', '../pages/PairModal.tsx'])
 
 describe('design tokens only', () => {
   it.each(sources)('$file uses no raw palette colors', ({ src }) => {
     expect(src.match(rawPalette)?.[0] ?? null).toBeNull()
     expect(src.match(arbitraryColor)?.[0] ?? null).toBeNull()
+  })
+
+  for (const { file, src } of sources) {
+    const check = pendingWhiteBlack.has(file) ? it.fails : it
+    check(`${file} uses no bare white/black color utilities`, () => {
+      expect(src.match(bareWhiteBlack)?.[0] ?? null).toBeNull()
+    })
+  }
+
+  it('the detector catches bare white/black utilities', () => {
+    for (const c of ['text-white', 'inset-ring-white/15', 'dark:hover:bg-black/50', 'from-white', 'ring-black', 'fill-white']) {
+      expect(bareWhiteBlack.test(c), c).toBe(true)
+    }
+    for (const c of ['text-fg-on-brand', 'whitespace-nowrap', 'bg-surface', 'inset-ring-fg-on-brand/15', 'text-whitesmoke']) {
+      expect(bareWhiteBlack.test(c), c).toBe(false)
+    }
   })
 
   it('the detector catches raw palette names', () => {
@@ -84,10 +108,10 @@ const textPairs = ['color-fg', 'color-fg-muted', 'color-fg-subtle'].flatMap((fg)
 )
 // White text on filled buttons: every stop of the primary gradient, and danger.
 const onFillPairs = [
-  ['color-white', 'color-brand-600'],
-  ['color-white', 'color-brand-700'],
-  ['color-white', 'color-danger-600'],
-  ['color-white', 'color-danger-700'],
+  ['color-fg-on-brand', 'color-brand-600'],
+  ['color-fg-on-brand', 'color-brand-700'],
+  ['color-fg-on-brand', 'color-danger-600'],
+  ['color-fg-on-brand', 'color-danger-700'],
 ] as const
 
 describe('contrast (WCAG AA, 4.5:1)', () => {
@@ -115,6 +139,6 @@ describe('primary button gradient', () => {
     const primary = src.match(/primary:\s*([\s\S]*?),\n\s+secondary:/)?.[1] ?? ''
     const stops = [...primary.matchAll(/(?:^|[\s'])(?:hover:)?(?:bg|from|via|to)-(brand-\d+)\b/g)].map((m) => m[1]!)
     expect(stops.length).toBeGreaterThanOrEqual(3)
-    for (const stop of stops) expect(contrast(lightVars, 'color-white', `color-${stop}`), stop).toBeGreaterThanOrEqual(4.5)
+    for (const stop of stops) expect(contrast(lightVars, 'color-fg-on-brand', `color-${stop}`), stop).toBeGreaterThanOrEqual(4.5)
   })
 })

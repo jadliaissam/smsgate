@@ -67,18 +67,25 @@ export interface Credentials {
   password: string
 }
 
+// Credentials are mutation variables: gcTime 0 drops the settled mutation
+// (and the password in it) from the cache as soon as its observer resets or
+// unmounts, instead of keeping it for the default five minutes.
 export function useLogin() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (c: Credentials) => api<undefined>('/app/login', { method: 'POST', body: c }),
-    // A new session: forget anything cached for a previous one.
-    onSuccess: () => qc.removeQueries({ queryKey: meKey }),
+    gcTime: 0,
+    // A new session: forget everything cached for a previous one. This runs
+    // on a signed-out page (login/signup), before navigating into the app, so
+    // no protected query is mounted to refetch into (or be orphaned by) it.
+    onSuccess: () => qc.clear(),
   })
 }
 
 export function useSignup() {
   return useMutation({
     mutationFn: (c: Credentials) => api<{ id: string; email: string }>('/app/signup', { method: 'POST', body: c }),
+    gcTime: 0,
   })
 }
 

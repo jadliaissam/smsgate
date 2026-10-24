@@ -30,6 +30,8 @@ describe('session guard', () => {
     const { router, queryClient } = renderApp('/')
     await waitFor(() => expect(locationOf(router)).toBe('/login?next=%2F'))
     expect(queryClient.getQueryData(meKey)).toBeUndefined()
+    // Nothing of the expired session's data survives for the next user.
+    await waitFor(() => expect(queryClient.getQueryCache().getAll()).toHaveLength(0))
   })
 
   it('renders the protected page when the session is valid', async () => {

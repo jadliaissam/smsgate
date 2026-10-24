@@ -8,7 +8,7 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router'
-import { createQueryClient, isUnauthorized, meKey, meQuery } from './api/queries'
+import { createQueryClient, isUnauthorized, meQuery } from './api/queries'
 import { AuthLayout } from './layout/AuthLayout'
 import { ErrorPanel, PagePending, SessionError, SplashScreen } from './layout/RouteStates'
 import { NotFound } from './pages/NotFound'
@@ -158,10 +158,9 @@ export function createApp({ history = createBrowserHistory(), retry = true }: Cr
     // the redirect; on public pages a 401 is the expected signed-out answer.
     if (status !== 'idle' || !matches.some((m) => m.routeId === APP_ROUTE_ID)) return
     const next = location.pathname + location.searchStr
-    // Leave the protected page first so nothing re-requests `me`, then drop it.
-    void router
-      .navigate({ to: '/login', search: { next }, replace: true })
-      .then(() => queryClient.removeQueries({ queryKey: meKey }))
+    // Leave the protected pages first so nothing refetches into the cache,
+    // then drop all of it: the next user must not see this one's data.
+    void router.navigate({ to: '/login', search: { next }, replace: true }).then(() => queryClient.clear())
   }
   const queryClient = createQueryClient({ onUnauthorized, retry })
   const router = createAppRouter(queryClient, history)
