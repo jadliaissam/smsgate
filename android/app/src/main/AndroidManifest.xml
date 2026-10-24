@@ -13,12 +13,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SmsGate">
 
-        <!-- Wide colour gamut (API 26+): the generated Display P3 tokens show the dashboard's
-             saturation on P3 screens; sRGB screens get the mapped sRGB value. -->
+        <!-- Wide colour gamut is enabled in MainActivity on API 29+ only (see there). -->
         <activity
             android:name=".ui.MainActivity"
-            android:colorMode="wideColorGamut"
-            tools:targetApi="26"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
