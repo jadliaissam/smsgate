@@ -19,8 +19,9 @@ const keyUser ctxKey = iota
 // principal is the authenticated caller stored in the request context (one
 // context value, so one allocation, for both ids).
 type principal struct {
-	user   uuid.UUID
-	apiKey uuid.UUID // zero under RequireSession
+	user     uuid.UUID
+	apiKey   uuid.UUID // zero under RequireSession
+	verified bool      // email verified; set by RequireSession only
 }
 
 // UserID returns the authenticated user's id set by RequireSession or RequireAPIKey.
@@ -36,8 +37,21 @@ func APIKeyID(ctx context.Context) uuid.UUID {
 	return p.apiKey
 }
 
+// Verified wraps next so that session callers (RequireSession) whose email is
+// not verified get ErrEmailNotVerified (403). Place it after RequireSession.
+func Verified(next http.Handler) http.Handler {
+	return httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
+		if p, _ := r.Context().Value(keyUser).(principal); !p.verified {
+			return ErrEmailNotVerified
+		}
+		next.ServeHTTP(w, r)
+		return nil
+	})
+}
+
 // RequireSession rejects requests without a valid, unexpired session cookie
-// (named cookie) with 401 and stores the user id in the context otherwise.
+// (named cookie) with 401 and stores the user id and whether their email is
+// verified in the context otherwise.
 func RequireSession(q *dbq.Queries, cookie string, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return httpx.RequireJSON(httpx.Handle(func(w http.ResponseWriter, r *http.Request) error {
@@ -52,7 +66,7 @@ func RequireSession(q *dbq.Queries, cookie string, now func() time.Time) func(ht
 				}
 				return err
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, principal{user: u.ID})))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyUser, principal{user: u.ID, verified: u.EmailVerifiedAt != nil})))
 			return nil
 		}))
 	}

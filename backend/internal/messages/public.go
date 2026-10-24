@@ -27,12 +27,13 @@ func Routes(mux *http.ServeMux, s *Service, auth, sendLimit func(http.Handler) h
 }
 
 // AppRoutes registers the dashboard variants of the same handlers under
-// session auth (accounts.RequireSession). sendLimit wraps only POST /app/messages.
+// session auth (accounts.RequireSession). sendLimit wraps only POST /app/messages,
+// which additionally requires a verified email (checked before the limiter).
 func AppRoutes(mux *http.ServeMux, s *Service, sess, sendLimit func(http.Handler) http.Handler) {
 	if sendLimit == nil {
 		sendLimit = accounts.Identity
 	}
-	mux.Handle("POST /app/messages", sess(sendLimit(httpx.Handle(s.create))))
+	mux.Handle("POST /app/messages", sess(accounts.Verified(sendLimit(httpx.Handle(s.create)))))
 	mux.Handle("GET /app/messages/{id}", sess(httpx.Handle(s.get)))
 	mux.Handle("GET /app/messages", sess(httpx.Handle(s.list)))
 	mux.Handle("GET /app/stats", sess(httpx.Handle(s.stats)))

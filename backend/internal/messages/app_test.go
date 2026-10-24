@@ -1,10 +1,13 @@
 package messages_test
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/smsgate/backend/internal/apptest"
 )
 
 func (f *fixture) appDo(method, path string, body any, extra ...string) (int, map[string]any) {
@@ -82,5 +85,49 @@ func TestAppMessagesRequireSession(t *testing.T) {
 		if r.StatusCode != 401 {
 			t.Fatalf("%s %s with api key: %d", c.method, c.path, r.StatusCode)
 		}
+	}
+}
+
+func TestAppSendRequiresVerifiedEmail(t *testing.T) {
+	app := apptest.New(t)
+	const email = "unverified@example.com"
+	if r, m := app.Do("POST", "/app/signup", map[string]string{"email": email, "password": apptest.Password}); r.StatusCode != 201 {
+		t.Fatalf("signup %d %v", r.StatusCode, m)
+	}
+	r, m := app.Do("POST", "/app/login", map[string]string{"email": email, "password": apptest.Password})
+	if r.StatusCode != 204 {
+		t.Fatalf("login %d %v", r.StatusCode, m)
+	}
+	var cookie *http.Cookie
+	for _, c := range r.Cookies() {
+		if c.Name == app.Cfg.SessionCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no session cookie")
+	}
+	ck := []string{"Cookie", cookie.Name + "=" + cookie.Value}
+	// A random device id would be 404 device_not_found; 403 proves the
+	// verification check runs before the request is looked at.
+	body := map[string]any{"device_id": uuid.NewString(), "to": "+37060000000", "body": "hello"}
+	r, m = app.Do("POST", "/app/messages", body, ck...)
+	if r.StatusCode != 403 || errCode(m) != "email_not_verified" {
+		t.Fatalf("unverified send %d %v", r.StatusCode, m)
+	}
+	// Reading stays allowed.
+	r, m = app.Do("GET", "/app/messages", nil, ck...)
+	if d, ok := m["data"].([]any); r.StatusCode != 200 || !ok || len(d) != 0 {
+		t.Fatalf("unverified list %d %v", r.StatusCode, m)
+	}
+
+	if r, m := app.Do("POST", "/app/verify", map[string]string{"token": app.Token(email)}); r.StatusCode != 204 {
+		t.Fatalf("verify %d %v", r.StatusCode, m)
+	}
+	dev, _ := app.PairDevice(t, cookie)
+	body["device_id"] = dev.String()
+	r, m = app.Do("POST", "/app/messages", body, ck...)
+	if r.StatusCode != 202 || m["status"] != "queued" {
+		t.Fatalf("verified send %d %v", r.StatusCode, m)
 	}
 }
