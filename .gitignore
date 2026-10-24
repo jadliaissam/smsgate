@@ -12,3 +12,13 @@ android/build
 
 # Android Firebase config: private, never commit (CI writes it from a secret)
 google-services.json
+
+# Android build output and local-only files (signing keys never committed)
+android/**/build
+android/.gradle
+android/.kotlin
+android/local.properties
+local.properties
+*.jks
+*.keystore
+keystore.properties

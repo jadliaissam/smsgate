@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Brand gradient tile (brand-400 → brand-600 → brand-800), as the web logo. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="315"
+        android:centerColor="@color/token_brand_600"
+        android:endColor="@color/token_brand_800"
+        android:startColor="@color/token_brand_400"
+        android:type="linear" />
+</shape>
