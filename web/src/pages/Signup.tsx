@@ -4,6 +4,7 @@ import { useLogin, useSignup } from '../api/queries'
 import { AuthHeader } from '../layout/AuthLayout'
 import { FormAlert } from '../layout/FormAlert'
 import { ResendButton } from '../layout/ResendButton'
+import { startResendCooldown } from '../layout/resendCooldown'
 import { Button } from '../ui/Button'
 import { buttonStyles, cx } from '../ui/cx'
 import { Input } from '../ui/Input'
@@ -18,6 +19,7 @@ export function Signup() {
   const [password, setPassword] = useState('')
   const [errors, setErrors] = useState<AuthFormErrors>({})
   const [sentTo, setSentTo] = useState<string | null>(null)
+  const [signedIn, setSignedIn] = useState(false)
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -25,9 +27,20 @@ export function Signup() {
     const creds = { email: email.trim(), password }
     signup.mutate(creds, {
       onSuccess: (user) => {
+        // The backend just sent the verification email.
+        startResendCooldown()
+        setPassword('')
         // Signup does not open a session; sign in right away so the
         // dashboard (and resending the link) work without a second form.
-        login.mutate(creds, { onSettled: () => setSentTo(user.email) })
+        login.mutate(creds, {
+          onSuccess: () => setSignedIn(true),
+          onSettled: () => {
+            setSentTo(user.email)
+            // Drop the password from both mutations' variables.
+            signup.reset()
+            login.reset()
+          },
+        })
       },
       onError: (err) => {
         const mapped = authFormErrors(err)
@@ -37,7 +50,7 @@ export function Signup() {
     })
   }
 
-  if (sentTo) return <CheckInbox email={sentTo} signedIn={login.isSuccess} />
+  if (sentTo) return <CheckInbox email={sentTo} signedIn={signedIn} />
 
   return (
     <>
@@ -101,7 +114,7 @@ function CheckInbox({ email, signedIn }: { email: string; signedIn: boolean }) {
             </Link>
             <div className="flex items-center justify-center gap-2 text-sm text-fg-muted">
               <span>Didn’t get it?</span>
-              <ResendButton variant="ghost" coolingDown />
+              <ResendButton variant="ghost" />
             </div>
           </>
         ) : (

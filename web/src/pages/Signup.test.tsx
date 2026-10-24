@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, mockFetch } from '../test/mockFetch'
 import { renderApp } from '../test/renderApp'
@@ -52,5 +52,23 @@ describe('Signup', () => {
     })
     expect(m.callsTo('POST', '/app/login')).toHaveLength(1)
     expect(screen.getByRole('link', { name: /continue to dashboard/i })).toHaveAttribute('href', '/')
+  })
+
+  it('does not keep the password in mutation variables after success', async () => {
+    mockFetch([
+      { method: 'POST', path: '/app/signup', status: 201, json: { id: 'u1', email: 'ada@example.com' } },
+      { method: 'POST', path: '/app/login', status: 204 },
+    ])
+    const { queryClient } = renderApp('/signup')
+    await fillAndSubmit('a long enough passphrase')
+    await screen.findByRole('heading', { name: /check your inbox/i })
+
+    // The observers were reset and nothing in the mutation cache holds it.
+    await waitFor(() => {
+      const vars = queryClient.getMutationCache().getAll().map((m) => m.state.variables)
+      expect(JSON.stringify(vars ?? [])).not.toContain('a long enough passphrase')
+    })
+    // Still signed in (state captured before the reset).
+    expect(screen.getByRole('link', { name: /continue to dashboard/i })).toBeInTheDocument()
   })
 })

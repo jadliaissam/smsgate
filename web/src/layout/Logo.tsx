@@ -6,7 +6,7 @@ export function LogoMark({ className }: { className?: string }) {
     <span
       aria-hidden="true"
       className={cx(
-        'inline-flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-linear-to-br from-brand-400 via-brand-600 to-brand-800 text-fg-on-brand shadow-glow inset-ring inset-ring-white/15',
+        'inline-flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-linear-to-br from-brand-400 via-brand-600 to-brand-800 text-fg-on-brand shadow-glow inset-ring inset-ring-fg-on-brand/15',
         className,
       )}
     >
