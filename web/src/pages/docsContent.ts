@@ -284,13 +284,13 @@ export const sendFields: Field[] = [
     name: 'to',
     type: 'string',
     required: true,
-    description: `Recipient in E.164 format, e.g. ${SAMPLE_TO}. Validated with libphonenumber.`,
+    description: `Recipient in E.164 format, e.g. ${SAMPLE_TO}. Format only: +, then 7–15 digits, the first not 0.`,
   },
   {
     name: 'body',
     type: 'string',
     required: true,
-    description: `Message text, at most ${limits.maxSegments} SMS segments: ${limits.gsmChars} GSM-7 characters, or ${limits.unicodeChars} when the text needs Unicode (emoji, Cyrillic, …).`,
+    description: `Message text, at most ${limits.maxSegments} SMS segments: ${limits.gsmChars} GSM-7 characters, or ${limits.unicodeChars} when the text needs Unicode (emoji, Cyrillic, …). Some symbols such as € [ ] { } count as two GSM-7 characters.`,
   },
   {
     name: 'ttl_seconds',
@@ -324,7 +324,7 @@ export interface ErrorCode {
 }
 
 export const errorCodes: ErrorCode[] = [
-  { status: 400, code: 'invalid_json', meaning: 'The body is not valid JSON, has unknown fields or trailing data.' },
+  { status: 400, code: 'invalid_json', meaning: 'The body is not valid JSON, has unknown fields, a field of the wrong type, or trailing data.' },
   { status: 401, code: 'unauthorized', meaning: 'Missing, malformed or revoked API key.' },
   { status: 404, code: 'device_not_found', meaning: 'No such device on your account (or it was revoked).' },
   { status: 404, code: 'message_not_found', meaning: 'No such message on your account.' },
@@ -338,8 +338,8 @@ export const errorCodes: ErrorCode[] = [
   { status: 422, code: 'body_too_long', meaning: `body needs more than ${limits.maxSegments} SMS segments.` },
   { status: 422, code: 'invalid_ttl', meaning: `ttl_seconds is outside ${limits.ttlMin}–${limits.ttlMax}.` },
   { status: 422, code: 'invalid_sim_slot', meaning: 'sim_slot is not one of the device’s SIMs.' },
-  { status: 422, code: 'invalid_client_ref', meaning: `client_ref is longer than ${limits.clientRefMax} characters.` },
-  { status: 422, code: 'invalid_idempotency_key', meaning: `Idempotency-Key is longer than ${limits.idemKeyMax} characters or not UTF-8.` },
+  { status: 422, code: 'invalid_client_ref', meaning: `client_ref is longer than ${limits.clientRefMax} characters or contains a NUL character.` },
+  { status: 422, code: 'invalid_idempotency_key', meaning: `Idempotency-Key is longer than ${limits.idemKeyMax} bytes or not UTF-8.` },
   { status: 422, code: 'invalid_limit', meaning: `limit is not between 1 and ${limits.listMax}.` },
   { status: 422, code: 'invalid_device_id', meaning: 'device_id query parameter is not a UUID.' },
   { status: 422, code: 'invalid_status', meaning: 'status query parameter is not a known status.' },
