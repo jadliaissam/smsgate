@@ -115,9 +115,15 @@ const apiKeysRoute = createRoute({
   component: lazyRouteComponent(() => import('./pages/ApiKeys'), 'ApiKeys'),
 })
 
+const docsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/docs',
+  component: lazyRouteComponent(() => import('./pages/Docs'), 'Docs'),
+})
+
 const routeTree = rootRoute.addChildren([
   authRoute.addChildren([loginRoute, signupRoute, verifyRoute]),
-  appRoute.addChildren([overviewRoute, devicesRoute, messagesRoute, apiKeysRoute]),
+  appRoute.addChildren([overviewRoute, devicesRoute, messagesRoute, apiKeysRoute, docsRoute]),
 ])
 
 function createAppRouter(queryClient: QueryClient, history: RouterHistory) {
