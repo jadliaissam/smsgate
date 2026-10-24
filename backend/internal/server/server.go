@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/smsgate/backend/internal/accounts"
@@ -16,6 +17,7 @@ import (
 	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
 	"github.com/smsgate/backend/internal/ratelimit"
+	"github.com/smsgate/backend/internal/realtime"
 	"github.com/smsgate/backend/internal/secret"
 )
 
@@ -31,6 +33,18 @@ type Deps struct {
 	// for in-flight wake goroutines (shutdown, tests) supply their own and call
 	// Wait. New sets its Now to Deps.Now (time.Now when nil).
 	Messages *messages.Service
+	// Hub, when set, serves the device WebSocket GET /device/v1/ws. The caller
+	// owns its lifecycle (Run, a realtime.Listener, Shutdown).
+	Hub *realtime.Hub
+}
+
+// NewHub builds the device WebSocket hub from cfg (see Deps.Hub).
+func NewHub(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger, now func() time.Time) *realtime.Hub {
+	return realtime.NewHub(realtime.Options{
+		Q: dbq.New(pool), Log: log, Now: now,
+		PingTimeout: cfg.WSPingTimeout, WriteTimeout: cfg.WSWriteTimeout, StaleAfter: cfg.WSStaleAfter,
+		FrameTimeout: cfg.WriteTimeout, MaxConns: cfg.WSMaxConns, ReadLimit: cfg.MaxBodyBytes, ResyncMargin: cfg.WSResyncMargin,
+	})
 }
 
 // New builds the router with middleware: RequestID, Recover, AccessLog.
@@ -75,14 +89,21 @@ func New(d Deps) http.Handler {
 	appSendRL := sendLim.Middleware(func(r *http.Request) ratelimit.Key {
 		return ratelimit.Key(accounts.UserID(r.Context()))
 	})
-	devRL := ratelimit.New(d.Cfg.RLDevicePerMin, d.Cfg.RLMaxKeys).Middleware(func(r *http.Request) ratelimit.Key {
+	devLim := ratelimit.New(d.Cfg.RLDevicePerMin, d.Cfg.RLMaxKeys)
+	devRL := devLim.Middleware(func(r *http.Request) ratelimit.Key {
 		return ratelimit.Key(devices.FromContext(r.Context()).ID)
 	})
+	// WebSocket frames share the device's budget with its HTTP calls.
+	var frameLimit func(uuid.UUID) bool
+	if devLim != nil {
+		frameLimit = func(id uuid.UUID) bool { ok, _ := devLim.Allow(ratelimit.Key(id)); return ok }
+	}
 	accounts.Routes(mux, accounts.Deps{
 		Pool: d.Pool, Q: q, Hasher: hasher, Auth: auth, Mailer: d.Mailer, Cfg: d.Cfg, Log: d.Log, Now: d.Now,
 		AuthLimit: authRL,
 	})
-	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now, AuthLimit: authRL, DeviceLimit: devRL})
+	devices.Routes(mux, devices.Deps{Pool: d.Pool, Q: q, Auth: auth, Cfg: d.Cfg, Now: d.Now, AuthLimit: authRL, DeviceLimit: devRL,
+		Hub: d.Hub, FrameLimit: frameLimit})
 	if d.Messages == nil {
 		d.Messages = messages.NewService(q, d.Waker, d.Cfg, d.Log)
 	}

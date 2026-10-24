@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 23–25 launcher icon: rounded brand tile with the glyph (no adaptive icons before 26). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:bottom="4dp" android:left="4dp" android:right="4dp" android:top="4dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="12dp" />
+            <gradient
+                android:angle="315"
+                android:centerColor="@color/token_brand_600"
+                android:endColor="@color/token_brand_800"
+                android:startColor="@color/token_brand_400" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_logo_bubble" android:bottom="13dp" android:left="13dp" android:right="13dp" android:top="13dp" />
+</layer-list>

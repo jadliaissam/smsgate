@@ -1,0 +1,158 @@
+name: android
+
+on:
+  push:
+    # Path filters apply to branch pushes only; android-v* tags always run (release).
+    branches: ["**"]
+    tags: ["android-v*"]
+    paths: ["android/**", "web/src/index.css", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", "web/src/index.css", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  VERSION_CODE: ${{ github.run_number }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: theme tokens match web/src/index.css
+        run: node android/scripts/gen-tokens.mjs --check
+
+      - name: token generator tests
+        run: node --test 'android/scripts/*.test.mjs'
+
+      # google-services.json is private: CI writes it from a secret. Secrets are
+      # not available to fork pull requests or Dependabot runs, so those skip the Gradle build.
+      - name: write google-services.json
+        id: gs
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          NO_SECRETS: ${{ github.actor == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            if [ "$NO_SECRETS" = "true" ]; then
+              echo "::notice::GOOGLE_SERVICES_JSON_BASE64 is not available to fork pull requests or Dependabot; skipping the Gradle build."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::The GOOGLE_SERVICES_JSON_BASE64 secret is empty. Add it (base64 of android/app/google-services.json) in the repository secrets."
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.gs.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        if: steps.gs.outputs.skip != 'true'
+        with:
+          packages: "platforms;android-37.0 build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.gs.outputs.skip != 'true'
+
+      - name: lint, unit tests, debug build
+        if: steps.gs.outputs.skip != 'true'
+        working-directory: android
+        run: ./gradlew lint testDebugUnitTest assembleDebug
+
+      - name: upload reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+          retention-days: 7
+
+  release:
+    # Tag android-v<semver> → signed release APK attached to a GitHub Release as smsgate.apk.
+    # Required secrets: GOOGLE_SERVICES_JSON_BASE64, ANDROID_KEYSTORE_BASE64,
+    # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/android-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: write google-services.json and the keystore
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for s in GOOGLE_SERVICES_JSON_BASE64 ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
+          done
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37.0 build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: assemble signed release
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export VERSION_NAME="${GITHUB_REF_NAME#android-v}"
+          # No configuration cache: keeps the signing secrets out of cached build state.
+          ./gradlew --no-configuration-cache assembleRelease
+          apk=app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
+          cp "$apk" "$GITHUB_WORKSPACE/smsgate.apk"
+          cp app/build/outputs/mapping/release/mapping.txt "$GITHUB_WORKSPACE/mapping-$GITHUB_REF_NAME.txt"
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The R8 mapping file is attached so crash stack traces can be de-obfuscated.
+        run: |
+          assets=(smsgate.apk "mapping-$GITHUB_REF_NAME.txt")
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "SMSGate Android ${GITHUB_REF_NAME#android-v}" \
+              --generate-notes
+          fi

@@ -125,18 +125,34 @@ type Service struct {
 
 	sem chan struct{} // bounds concurrent wake goroutines (cfg.WakeConcurrency)
 	wg  sync.WaitGroup
+
+	mu        sync.Mutex
+	fallbacks map[uuid.UUID]*time.Timer // pending FCM fallbacks by message id
+	stopped   bool                      // set by Wait: no new fallbacks
 }
 
 // NewService builds a Service. The wake semaphore size is cfg.WakeConcurrency.
 func NewService(q *dbq.Queries, waker push.Waker, cfg config.Config, log *slog.Logger) *Service {
 	n := max(cfg.WakeConcurrency, 1)
-	return &Service{q: q, waker: waker, cfg: cfg, log: log, Now: time.Now, sem: make(chan struct{}, n)}
+	return &Service{q: q, waker: waker, cfg: cfg, log: log, Now: time.Now, sem: make(chan struct{}, n),
+		fallbacks: make(map[uuid.UUID]*time.Timer)}
 }
 
-// Wait blocks until every in-flight wake goroutine has finished. Call it on
-// shutdown (and in tests before dropping the database), after the HTTP server
-// has stopped accepting requests.
-func (s *Service) Wait() { s.wg.Wait() }
+// Wait cancels pending FCM fallbacks and blocks until every in-flight wake
+// goroutine has finished. Call it on shutdown (and in tests before dropping
+// the database), after the HTTP server has stopped accepting requests.
+func (s *Service) Wait() {
+	s.mu.Lock()
+	s.stopped = true
+	for id, t := range s.fallbacks {
+		if t.Stop() { // never ran: release its slot here
+			s.wg.Done()
+		}
+		delete(s.fallbacks, id)
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
+}
 
 // Create validates in and queues the message, returning created=false (and the
 // original message) for an idempotent replay. Validation order, first failure
@@ -223,10 +239,63 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		}), false, nil
 	}
 	m := fromPub(pubRow(row))
+	// InsertMessage NOTIFYs smsgate_wake, which reaches the device's socket on
+	// whichever instance holds it. FCM goes out right away unless the device
+	// has a live socket somewhere; then only as a fallback if the message is
+	// still unclaimed after WS_FCM_FALLBACK (the socket may be half-dead). The
+	// device dedupes by message id, so a double wake is harmless.
 	if dev.FcmToken != nil && *dev.FcmToken != "" {
-		s.wake(push.WakeTarget{DeviceID: in.DeviceID, FCMToken: *dev.FcmToken, MessageID: m.ID, ExpiresAt: m.ExpiresAt})
+		t := push.WakeTarget{DeviceID: in.DeviceID, FCMToken: *dev.FcmToken, MessageID: m.ID, ExpiresAt: m.ExpiresAt}
+		if s.socketLive(dev.WsConnectedAt) {
+			s.wakeLater(t)
+		} else {
+			s.wake(t)
+		}
 	}
 	return m, true, nil
+}
+
+// socketLive reports whether some instance holds the device's WebSocket: its
+// ws_connected_at was refreshed within WS_STALE_AFTER.
+func (s *Service) socketLive(at *time.Time) bool {
+	return at != nil && at.After(s.Now().Add(-s.cfg.WSStaleAfter))
+}
+
+// wakeLater schedules an FCM wake for t after WS_FCM_FALLBACK, sent only if
+// the message is then still queued and unexpired. 0 disables the fallback.
+func (s *Service) wakeLater(t push.WakeTarget) {
+	if s.cfg.WSFCMFallback <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
+	s.wg.Add(1)
+	// The callback takes s.mu first, so it sees its own map entry.
+	s.fallbacks[t.MessageID] = time.AfterFunc(s.cfg.WSFCMFallback, func() {
+		defer s.wg.Done()
+		s.mu.Lock()
+		stopped := s.stopped
+		delete(s.fallbacks, t.MessageID)
+		s.mu.Unlock()
+		if stopped {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.WakeTimeout)
+		queued, err := s.q.MessageStillQueued(ctx, t.MessageID)
+		cancel()
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return
+		case err != nil:
+			s.log.Warn("fcm fallback: status check failed, waking anyway", "message_id", t.MessageID, "err", err)
+		case !queued:
+			return
+		}
+		s.wake(t)
+	})
 }
 
 // wake sends the push asynchronously. It never blocks the request: when all

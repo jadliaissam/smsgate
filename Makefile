@@ -1,4 +1,4 @@
-.PHONY: db-up db-down sqlc test run build web-install web-dev web-test web-build
+.PHONY: db-up db-down sqlc test run build web-install web-dev web-test web-build android-test android-build
 
 DEV_DB := postgres://smsgate:smsgate@localhost:5432/smsgate?sslmode=disable
 
@@ -35,3 +35,13 @@ web-test: web/node_modules
 
 web-build: web/node_modules
 	cd web && npm run build
+
+# Android (needs JDK 17 in JAVA_HOME, the SDK in ANDROID_HOME or android/local.properties,
+# and the private android/app/google-services.json copied in by hand).
+android-test:
+	node android/scripts/gen-tokens.mjs --check
+	node --test 'android/scripts/*.test.mjs'
+	cd android && ./gradlew lint testDebugUnitTest
+
+android-build:
+	cd android && ./gradlew assembleDebug

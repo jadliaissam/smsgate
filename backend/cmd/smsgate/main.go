@@ -20,6 +20,7 @@ import (
 	"github.com/smsgate/backend/internal/db/dbq"
 	"github.com/smsgate/backend/internal/messages"
 	"github.com/smsgate/backend/internal/push"
+	"github.com/smsgate/backend/internal/realtime"
 	"github.com/smsgate/backend/internal/server"
 	"github.com/smsgate/backend/internal/sweeper"
 )
@@ -119,7 +120,8 @@ func run() error {
 
 	q := dbq.New(pool)
 	svc := messages.NewService(q, waker, cfg, log)
-	handler := server.New(server.Deps{Pool: pool, Log: log, Cfg: cfg, Waker: waker, Mailer: mailer, Messages: svc})
+	hub := server.NewHub(pool, cfg, log, time.Now)
+	handler := server.New(server.Deps{Pool: pool, Log: log, Cfg: cfg, Waker: waker, Mailer: mailer, Messages: svc, Hub: hub})
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
@@ -132,6 +134,14 @@ func run() error {
 
 	sweepCtx, cancelSweep := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
+	// Device sockets: the reaper and the LISTEN connection that routes
+	// wake/revoke notifications from every instance to the sockets held here.
+	wg.Add(2)
+	go func() { defer wg.Done(); hub.Run(sweepCtx) }()
+	go func() {
+		defer wg.Done()
+		realtime.NewListener(pool.Config().ConnConfig, hub, log, cfg.WSListenRetryMax, cfg.WSListenPingInterval).Run(sweepCtx)
+	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -157,6 +167,9 @@ func run() error {
 	if err := srv.Shutdown(shCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("http shutdown", "err", err)
 	}
+	// Hijacked WebSockets are not drained by srv.Shutdown: close them (1001)
+	// so devices reconnect to another instance; their marks are cleared.
+	hub.Shutdown(shCtx)
 	cancelSweep()
 	done := make(chan struct{})
 	go func() { wg.Wait(); svc.Wait(); close(done) }()

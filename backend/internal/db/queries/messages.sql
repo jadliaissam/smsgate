@@ -1,5 +1,5 @@
 -- name: GetDeviceForUser :one
-SELECT id, fcm_token, sims FROM devices
+SELECT id, fcm_token, sims, ws_connected_at FROM devices
 WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL;
 
 -- InsertMessage creates the queued message and its 'queued' event in ONE
@@ -20,7 +20,10 @@ WITH m AS (
 ), e AS (
     INSERT INTO message_events (message_id, status) SELECT id, 'queued' FROM m
 )
-SELECT * FROM m;
+-- The lateral pg_notify wakes the device's WebSocket on whichever instance
+-- holds it (LISTEN smsgate_wake, payload "<device_id>:<message_id>"); it is
+-- delivered when this statement commits, and not at all on an idempotent replay.
+SELECT m.* FROM m, LATERAL (SELECT pg_notify('smsgate_wake', m.device_id::text || ':' || m.id::text)) n;
 
 -- GetMessageByIdem loads an idempotent replay's original (no body).
 -- name: GetMessageByIdem :one
@@ -173,3 +176,25 @@ SELECT * FROM u;
 SELECT status, count(*)::bigint AS n FROM messages
 WHERE user_id = @user_id AND created_at >= @since
 GROUP BY status;
+
+-- MessageStillQueued: true while the message waits for a claim and is not
+-- expired (decides the FCM fallback for socket-connected devices).
+-- name: MessageStillQueued :one
+SELECT (status = 'queued' AND expires_at > now())::bool AS queued FROM messages WHERE id = @id;
+
+-- ListWakeReplay finds queued, unexpired messages created since @since for the
+-- given devices (those with a socket on this instance): wakes that may have
+-- been missed while the LISTEN connection was down. At most @per_device
+-- (oldest first, they expire first) per device, so a backlog cannot overflow a
+-- socket's queue; devices catch the rest up through pending.
+-- name: ListWakeReplay :many
+SELECT r.device_id, r.id
+FROM (
+    SELECT m.device_id, m.id, m.created_at,
+           row_number() OVER (PARTITION BY m.device_id ORDER BY m.created_at, m.id) AS rn
+    FROM messages m
+    WHERE m.device_id = ANY(@device_ids::uuid[]) AND m.status = 'queued'
+      AND m.expires_at > now() AND m.created_at >= @since::timestamptz
+) r
+WHERE r.rn <= @per_device::int
+ORDER BY r.created_at, r.id;

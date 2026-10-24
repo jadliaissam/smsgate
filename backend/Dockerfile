@@ -12,7 +12,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/smsgate /smsgate
 # Git sha of the build (CI passes it); GET /healthz reports it as "revision".
 ARG REVISION=dev
-ENV GOMEMLIMIT=96MiB APP_REVISION=$REVISION
+ENV GOMEMLIMIT=160MiB APP_REVISION=$REVISION
 EXPOSE 8080
 USER nonroot
 # distroless has no shell or curl: the binary probes itself.

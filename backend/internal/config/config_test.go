@@ -76,6 +76,13 @@ func TestLoadDefaults(t *testing.T) {
 		{"WakeConcurrency", c.WakeConcurrency, 64},
 		{"WakeTimeout", c.WakeTimeout, 5 * time.Second},
 		{"FCMMaxIdlePerHost", c.FCMMaxIdlePerHost, 16},
+		{"WSPingTimeout", c.WSPingTimeout, 6 * time.Minute},
+		{"WSWriteTimeout", c.WSWriteTimeout, 10 * time.Second},
+		{"WSMaxConns", c.WSMaxConns, 10000},
+		{"WSStaleAfter", c.WSStaleAfter, 7 * time.Minute},
+		{"WSFCMFallback", c.WSFCMFallback, 10 * time.Second},
+		{"WSListenRetryMax", c.WSListenRetryMax, 30 * time.Second},
+		{"WSListenPingInterval", c.WSListenPingInterval, 30 * time.Second},
 		{"RLAuthPerMin", c.RLAuthPerMin, 10},
 		{"RLSendPerMin", c.RLSendPerMin, 60},
 		{"RLDevicePerMin", c.RLDevicePerMin, 120},
@@ -98,11 +105,14 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("COOKIE_SECURE", "false")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("ARGON2_THREADS", "4")
+	t.Setenv("WS_FCM_FALLBACK", "0")
+	t.Setenv("WS_MAX_CONNS", "50")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.TTLMax != 2*time.Hour || c.SweepBatch != 10 || c.CookieSecure || c.LogLevel != slog.LevelDebug || c.Argon2.Threads != 4 {
+	if c.TTLMax != 2*time.Hour || c.SweepBatch != 10 || c.CookieSecure || c.LogLevel != slog.LevelDebug || c.Argon2.Threads != 4 ||
+		c.WSFCMFallback != 0 || c.WSMaxConns != 50 {
 		t.Fatalf("overrides not applied: %+v", c)
 	}
 }
@@ -163,7 +173,7 @@ func TestEnvVars(t *testing.T) {
 	if !slices.Contains(v, "DATABASE_URL") {
 		t.Fatal("missing DATABASE_URL")
 	}
-	if len(v) != 60 {
+	if len(v) != 68 {
 		t.Fatalf("only %d vars", len(v))
 	}
 }
@@ -203,6 +213,14 @@ func TestValidate(t *testing.T) {
 		{"SMTP_PORT", func(c *Config) { c.Mailer = "smtp"; c.SMTPHost = "h"; c.SMTPFrom = "a@b"; c.SMTPPort = 70000 }},
 		{"PUBLIC_URL", func(c *Config) { c.PublicURL = "" }},
 		{"RL_MAX_KEYS", func(c *Config) { c.RLMaxKeys = 0 }},
+		{"WS_PING_TIMEOUT", func(c *Config) { c.WSPingTimeout = 0 }},
+		{"WS_WRITE_TIMEOUT", func(c *Config) { c.WSWriteTimeout = 0 }},
+		{"WS_MAX_CONNS", func(c *Config) { c.WSMaxConns = 0 }},
+		{"WS_STALE_AFTER", func(c *Config) { c.WSStaleAfter = c.WSPingTimeout }},
+		{"WS_FCM_FALLBACK", func(c *Config) { c.WSFCMFallback = -time.Second }},
+		{"WS_LISTEN_RETRY_MAX", func(c *Config) { c.WSListenRetryMax = 0 }},
+		{"WS_LISTEN_PING_INTERVAL", func(c *Config) { c.WSListenPingInterval = 0 }},
+		{"WS_RESYNC_MARGIN", func(c *Config) { c.WSResyncMargin = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {

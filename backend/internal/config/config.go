@@ -77,6 +77,16 @@ type Config struct {
 	WakeTimeout        time.Duration
 	FCMMaxIdlePerHost  int
 
+	// Device WebSocket (GET /device/v1/ws) and cross-instance wake routing.
+	WSPingTimeout        time.Duration // close a socket silent for longer
+	WSWriteTimeout       time.Duration // per-frame write budget
+	WSMaxConns           int           // sockets per instance
+	WSStaleAfter         time.Duration // ws_connected_at older than this = not connected
+	WSFCMFallback        time.Duration // FCM if a socket-woken message is still queued after this; 0 = never
+	WSListenRetryMax     time.Duration // max backoff reconnecting the LISTEN connection
+	WSListenPingInterval time.Duration // health check of the idle LISTEN connection
+	WSResyncMargin       time.Duration // after a LISTEN outage, wake sockets for messages queued this long before it began
+
 	Mailer       string // "smtp" or "log"
 	SMTPHost     string
 	SMTPPort     int
@@ -154,6 +164,15 @@ func Default() Config {
 		WakeConcurrency:   64,
 		WakeTimeout:       5 * time.Second,
 		FCMMaxIdlePerHost: 16,
+
+		WSPingTimeout:        6 * time.Minute,
+		WSWriteTimeout:       10 * time.Second,
+		WSMaxConns:           10000,
+		WSStaleAfter:         7 * time.Minute,
+		WSFCMFallback:        10 * time.Second,
+		WSListenRetryMax:     30 * time.Second,
+		WSListenPingInterval: 30 * time.Second,
+		WSResyncMargin:       time.Minute,
 
 		Mailer:      "smtp",
 		SMTPPort:    587,
@@ -252,6 +271,15 @@ func (l *loader) config() (Config, error) {
 	c.WakeConcurrency = l.integer("WAKE_CONCURRENCY", c.WakeConcurrency)
 	c.WakeTimeout = l.dur("WAKE_TIMEOUT", c.WakeTimeout)
 	c.FCMMaxIdlePerHost = l.integer("FCM_HTTP_MAX_IDLE_PER_HOST", c.FCMMaxIdlePerHost)
+
+	c.WSPingTimeout = l.dur("WS_PING_TIMEOUT", c.WSPingTimeout)
+	c.WSWriteTimeout = l.dur("WS_WRITE_TIMEOUT", c.WSWriteTimeout)
+	c.WSMaxConns = l.integer("WS_MAX_CONNS", c.WSMaxConns)
+	c.WSStaleAfter = l.dur("WS_STALE_AFTER", c.WSStaleAfter)
+	c.WSFCMFallback = l.dur("WS_FCM_FALLBACK", c.WSFCMFallback)
+	c.WSListenRetryMax = l.dur("WS_LISTEN_RETRY_MAX", c.WSListenRetryMax)
+	c.WSListenPingInterval = l.dur("WS_LISTEN_PING_INTERVAL", c.WSListenPingInterval)
+	c.WSResyncMargin = l.dur("WS_RESYNC_MARGIN", c.WSResyncMargin)
 
 	defMailer := c.Mailer
 	if c.Env == "dev" {
@@ -352,6 +380,21 @@ func (c Config) Validate() error {
 	pos("APIKEY_TOUCH_INTERVAL", c.APIKeyTouchInterval)
 	pos("WAKE_TIMEOUT", c.WakeTimeout)
 	pos("SMTP_TIMEOUT", c.SMTPTimeout)
+	pos("WS_PING_TIMEOUT", c.WSPingTimeout)
+	pos("WS_WRITE_TIMEOUT", c.WSWriteTimeout)
+	pos("WS_STALE_AFTER", c.WSStaleAfter)
+	pos("WS_LISTEN_RETRY_MAX", c.WSListenRetryMax)
+	pos("WS_LISTEN_PING_INTERVAL", c.WSListenPingInterval)
+	pos("WS_RESYNC_MARGIN", c.WSResyncMargin)
+	min1("WS_MAX_CONNS", int64(c.WSMaxConns))
+	if c.WSFCMFallback < 0 {
+		errs = append(errs, fmt.Errorf("WS_FCM_FALLBACK: must be >= 0, got %s", c.WSFCMFallback))
+	}
+	// A live socket refreshes ws_connected_at at least every
+	// WS_STALE_AFTER - WS_PING_TIMEOUT, so the gap must be positive.
+	if c.WSStaleAfter <= c.WSPingTimeout {
+		errs = append(errs, fmt.Errorf("WS_STALE_AFTER: %s must exceed WS_PING_TIMEOUT %s", c.WSStaleAfter, c.WSPingTimeout))
+	}
 	if c.TTLMin > c.TTLDefault {
 		errs = append(errs, fmt.Errorf("MSG_TTL_MIN: %s exceeds MSG_TTL_DEFAULT %s", c.TTLMin, c.TTLDefault))
 	}
