@@ -304,7 +304,7 @@ export function Docs() {
             <div>
               <SubHeading>Idempotency-Key header (recommended)</SubHeading>
               <p className="text-sm leading-6 text-fg-muted">
-                Send a unique value (for example a UUID, up to {limits.idemKeyMax} characters) per message. If the
+                Send a unique value (for example a UUID, up to {limits.idemKeyMax} bytes) per message. Keys are scoped to your account, not to one API key. If the
                 request times out, retry with the <span className="text-fg">same key and same body</span>: you get{' '}
                 <C>200</C> with the original message instead of a second SMS. The same key with a different body is
                 rejected with <C>409 idempotency_mismatch</C>.
@@ -379,7 +379,7 @@ export function Docs() {
           <Section
             id="lifecycle"
             title="Message lifecycle"
-            description="Poll GET /v1/messages/{id} to follow a message. delivered, failed and expired are final."
+            description="Poll GET /v1/messages/{id} to follow a message. delivered, failed and expired are final, except a device_lost failure, which a late report from the phone corrects."
           >
             <LifecycleDiagram />
             <div className="grid gap-4 sm:grid-cols-2">
@@ -441,7 +441,8 @@ export function Docs() {
             </dl>
             <p className="text-sm leading-6 text-fg-muted">
               Test sends from this dashboard have their own budget and do not use your keys&apos; limit. Android
-              also limits how fast one app may send SMS; a message it blocks ends as <C>failed</C>.
+              also limits how fast one app may send SMS; the Android app will report messages the OS blocks as{' '}
+              <C>failed</C>.
             </p>
           </Section>
 
