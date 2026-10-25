@@ -13,7 +13,14 @@ import com.jassam.smsgate.api.ServerClock
 import com.jassam.smsgate.api.ServerUrl
 import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.KeystoreTokenCipher
+import com.jassam.smsgate.journal.JournalDao
+import com.jassam.smsgate.journal.JournalDb
 import com.jassam.smsgate.sim.SimInventory
+import com.jassam.smsgate.sms.PlatformSmsTransport
+import com.jassam.smsgate.sms.SmsIntents
+import com.jassam.smsgate.sms.SmsResultHandler
+import com.jassam.smsgate.sms.SmsSender
+import com.jassam.smsgate.sms.StatusReportQueue
 import com.jassam.smsgate.ui.onboarding.Oem
 import com.jassam.smsgate.ui.onboarding.OemGuidance
 import com.jassam.smsgate.ui.onboarding.OnboardingPrefs
@@ -67,6 +74,39 @@ class AppGraph(context: Context) {
 
     /** Active SIMs for register/heartbeat (empty without READ_PHONE_STATE). */
     val simInventory: SimInventory by lazy { SimInventory(app) }
+
+    /**
+     * The message journal. Built on first use; Room opens the file on the first
+     * (suspend, off-main-thread) query. Main-thread queries are not allowed.
+     */
+    val journalDb: JournalDb by lazy { JournalDb.build(app) }
+
+    val journalDao: JournalDao by lazy { journalDb.journalDao() }
+
+    /**
+     * Status reports decided by the journal (sent / delivered / failed).
+     * TODO(A6): replace with the WorkManager-backed queue (unique ReportStatusWorker per
+     * (id, status), exponential backoff, network constraint).
+     */
+    val statusReportQueue: StatusReportQueue = StatusReportQueue { _, _, _, _ -> }
+
+    /** Hands claimed messages to SmsManager (at most once per journal row). */
+    val smsSender: SmsSender by lazy {
+        SmsSender(
+            dao = journalDao,
+            transport = PlatformSmsTransport(app),
+            sims = simInventory::activeSims,
+            intents = { ref -> SmsIntents.pendingIntent(app, ref) },
+            reports = statusReportQueue,
+            now = System::currentTimeMillis,
+            log = { Log.w("SmsGate", it) },
+        )
+    }
+
+    /** Applies per-part sent/delivery results (SmsResultReceiver). */
+    val smsResultHandler: SmsResultHandler by lazy {
+        SmsResultHandler(journalDao, statusReportQueue, System::currentTimeMillis)
+    }
 
     /** Onboarding flags (checklist done, permissions asked, OEM step done). */
     val onboardingPrefs: OnboardingPrefs by lazy { OnboardingPrefs(app) }

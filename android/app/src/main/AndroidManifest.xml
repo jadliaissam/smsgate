@@ -42,6 +42,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Per-part SMS sent/delivery results (explicit PendingIntents from SmsIntents only). -->
+        <receiver
+            android:name=".sms.SmsResultReceiver"
+            android:exported="false" />
+
         <!-- App Startup (D10): WorkManager is initialised on demand through App's
              Configuration.Provider; EmojiCompat (downloadable emoji font) is not needed.
              Kept: ProfileInstaller, ProcessLifecycle and OkHttp's context initializer (cheap). -->
