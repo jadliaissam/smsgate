@@ -59,7 +59,8 @@ class LogFormatTest {
         assertEquals(LogStatus.Sent, LogStatus.of(JournalState.SENT))
         assertEquals(LogStatus.Delivered, LogStatus.of(JournalState.DELIVERED))
         assertEquals(LogStatus.Failed, LogStatus.of(JournalState.FAILED))
-        assertEquals(LogStatus.Expired, LogStatus.of(JournalState.SKIPPED_EXPIRED))
+        // Reported as failed/expired_on_device: Failed, like the dashboard and Home's count.
+        assertEquals(LogStatus.Failed, LogStatus.of(JournalState.SKIPPED_EXPIRED))
         assertEquals(
             listOf(Tone.Neutral, Tone.Brand, Tone.Brand, Tone.Success, Tone.Danger, Tone.Warning),
             LogStatus.entries.map { it.tone },
@@ -105,7 +106,12 @@ class LogFormatTest {
 
     @Test
     fun skippedExpiredAndInFlightRows() {
-        assertEquals(TimelineStep.Expired(5_000), LogFormat.detail(entry(JournalState.SKIPPED_EXPIRED, code = "expired_on_device")).timeline.last())
+        val skipped = LogFormat.detail(entry(JournalState.SKIPPED_EXPIRED, code = "expired_on_device"))
+        assertEquals(LogStatus.Failed, skipped.status)
+        assertEquals(
+            listOf(TimelineStep.Claimed(1_000), TimelineStep.Failed(5_000, "expired_on_device", FriendlyError.ExpiredOnDevice)),
+            skipped.timeline,
+        )
         val sending = LogFormat.detail(entry(JournalState.SENDING, parts = 1))
         assertEquals(listOf(TimelineStep.Claimed(1_000), TimelineStep.Handed(5_000, 1)), sending.timeline)
         assertEquals(ReportState.None, sending.report)

@@ -172,7 +172,8 @@ fun HomeContent(state: HomeUiState, nowMs: Long, oem: Oem?, actions: HomeActions
 
         ConnectionCard(state, nowMs, actions)
         TodayCard(state.today)
-        SimsCard(state.sims, onFix = { actions.onFix(PermissionWarning(WarningKind.PhoneState)) })
+        val simFix = HomeLogic.simFix(state.warnings)
+        SimsCard(state.sims, blocked = simFix.blocked, onFix = { actions.onFix(simFix) })
     }
 }
 
@@ -286,14 +287,15 @@ private fun Stat(label: String, value: Int, tone: Tone, modifier: Modifier) {
 }
 
 @Composable
-private fun SimsCard(sims: SimsInfo, onFix: () -> Unit) {
+private fun SimsCard(sims: SimsInfo, blocked: Boolean, onFix: () -> Unit) {
     val colors = SmsGateTheme.colors
     SectionCard(stringResource(R.string.home_sims_title)) {
         when (sims) {
             SimsInfo.Loading -> Text(stringResource(R.string.home_sims_loading), style = MaterialTheme.typography.bodyMedium, color = colors.fgMuted)
             SimsInfo.NoPermission -> {
                 Text(stringResource(R.string.home_sims_no_permission), style = MaterialTheme.typography.bodyMedium, color = colors.fgMuted)
-                SecondaryButton(stringResource(R.string.action_allow), onFix, Modifier.padding(top = 8.dp))
+                val label = stringResource(if (blocked) R.string.action_open_app_settings else R.string.action_allow)
+                SecondaryButton(label, onFix, Modifier.padding(top = 8.dp))
             }
             is SimsInfo.Known -> if (sims.sims.isEmpty()) {
                 Text(stringResource(R.string.home_sims_none), style = MaterialTheme.typography.bodyMedium, color = colors.fgMuted)
@@ -322,7 +324,8 @@ private fun SimRow(sim: SimCard) {
                 if (sim.isDefault) StatusChip(stringResource(R.string.sim_default), Tone.Brand)
             }
             Text(
-                listOfNotNull(sim.carrier.ifBlank { null }, sim.number).joinToString(" · ").ifEmpty { stringResource(R.string.sim_unknown_carrier) },
+                listOfNotNull(sim.carrier.ifBlank { null }, sim.number).joinToString(stringResource(R.string.list_separator))
+                    .ifEmpty { stringResource(R.string.sim_unknown_carrier) },
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.fgMuted,
             )

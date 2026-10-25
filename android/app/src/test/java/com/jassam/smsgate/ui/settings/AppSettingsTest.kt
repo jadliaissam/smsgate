@@ -70,6 +70,12 @@ class AppSettingsTest {
             s.put("dev-1", AccountInfo("Pixel", "a@example.com"))
             assertEquals(AccountInfo("Pixel", "a@example.com"), s.get("dev-1"))
             assertNull(s.get("dev-2"))
+            s.clear("dev-2") // another device's clear leaves it
+            assertEquals(AccountInfo("Pixel", "a@example.com"), s.get("dev-1"))
+            s.setDeviceLabel("Front desk")
+            s.clear("dev-1")
+            assertNull(s.get("dev-1"))
+            assertEquals("Front desk", s.deviceLabel.first()) // the label stays
         }
     }
 }

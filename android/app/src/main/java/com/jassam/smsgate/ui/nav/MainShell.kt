@@ -45,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -61,6 +62,10 @@ import com.jassam.smsgate.ui.theme.SmsGateTheme
 import com.jassam.smsgate.ui.theme.Tone
 import com.jassam.smsgate.ui.theme.rememberReducedMotion
 import com.jassam.smsgate.ui.theme.toneColors
+
+/** Test tags of the two navigation layouts. */
+const val TAG_BOTTOM_BAR = "nav-bottom-bar"
+const val TAG_RAIL = "nav-rail"
 
 /** The paired app's destinations (no navigation library: a saved-state switcher). */
 enum class Tab(@StringRes val label: Int, @DrawableRes val icon: Int) {
@@ -146,7 +151,7 @@ private fun BottomBar(tab: Tab, onTab: (Tab) -> Unit) {
     val selected = if (dark) Palette.Brand300 else Palette.Brand700
     Column {
         HorizontalDivider(color = colors.border, thickness = 1.dp)
-        NavigationBar(containerColor = colors.surface, tonalElevation = 0.dp) {
+        NavigationBar(Modifier.testTag(TAG_BOTTOM_BAR), containerColor = colors.surface, tonalElevation = 0.dp) {
             for (t in Tab.entries) {
                 NavigationBarItem(
                     selected = t == tab,
@@ -174,6 +179,7 @@ private fun Rail(tab: Tab, onTab: (Tab) -> Unit) {
     val selected = if (dark) Palette.Brand300 else Palette.Brand700
     Row {
         NavigationRail(
+            modifier = Modifier.testTag(TAG_RAIL),
             containerColor = colors.surface,
             header = { LogoMark(Modifier.padding(vertical = 12.dp)) },
         ) {

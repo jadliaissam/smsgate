@@ -23,16 +23,17 @@ enum class LogStatus(val tone: Tone) {
     companion object {
         /**
          * A journal state in the dashboard's words. The journal only holds claimed
-         * messages, so nothing here is Queued; CLAIMED and SENDING are "dispatched"
-         * (picked up, being sent), and a message skipped because it expired on the
-         * phone shows as Expired.
+         * messages, so nothing here is Queued or Expired (the dashboard's Expired means
+         * never picked up); CLAIMED and SENDING are "dispatched" (picked up, being sent).
+         * A message skipped because it expired on the phone is reported as failed
+         * (`expired_on_device`), so it shows as Failed here too, as on the dashboard and
+         * in Home's failed count.
          */
         fun of(state: JournalState): LogStatus = when (state) {
             JournalState.CLAIMED, JournalState.SENDING -> Dispatched
             JournalState.SENT -> Sent
             JournalState.DELIVERED -> Delivered
-            JournalState.FAILED -> Failed
-            JournalState.SKIPPED_EXPIRED -> Expired
+            JournalState.FAILED, JournalState.SKIPPED_EXPIRED -> Failed
         }
     }
 }
@@ -87,10 +88,8 @@ sealed interface TimelineStep {
 
     data class Delivered(override val atMs: Long?, val delivered: Int, val parts: Int) : TimelineStep
 
+    /** Failed, including a message not sent because its validity window had passed. */
     data class Failed(override val atMs: Long, val code: String?, val friendly: FriendlyError) : TimelineStep
-
-    /** Not sent: the validity window had passed. */
-    data class Expired(override val atMs: Long) : TimelineStep
 }
 
 /** Whether the final status reached the server. */
@@ -173,7 +172,10 @@ object LogFormat {
         }
         when (e.state) {
             JournalState.FAILED -> add(TimelineStep.Failed(e.updatedAt, e.errorCode, FriendlyError.of(e.errorCode)))
-            JournalState.SKIPPED_EXPIRED -> add(TimelineStep.Expired(e.updatedAt))
+            JournalState.SKIPPED_EXPIRED -> {
+                val code = e.errorCode ?: ErrorCodes.EXPIRED_ON_DEVICE
+                add(TimelineStep.Failed(e.updatedAt, code, FriendlyError.ExpiredOnDevice))
+            }
             else -> Unit
         }
     }

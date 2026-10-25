@@ -16,6 +16,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -43,6 +44,8 @@ import com.jassam.smsgate.ui.log.LogItem
 import com.jassam.smsgate.ui.log.LogStatus
 import com.jassam.smsgate.ui.log.LogUiState
 import com.jassam.smsgate.ui.nav.MainShellContent
+import com.jassam.smsgate.ui.nav.TAG_BOTTOM_BAR
+import com.jassam.smsgate.ui.nav.TAG_RAIL
 import com.jassam.smsgate.ui.nav.Tab
 import com.jassam.smsgate.ui.onboarding.Oem
 import com.jassam.smsgate.ui.settings.DefaultSim
@@ -55,7 +58,6 @@ import com.jassam.smsgate.ui.theme.SmsGateTheme
 import com.jassam.smsgate.ui.theme.ThemeMode
 import androidx.compose.material3.Text
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -115,6 +117,20 @@ class ScreensSmokeTest {
         compose.onNodeWithContentDescription("Delivered today: 1200").assertExists()
         scroll.performScrollToNode(hasText("SIM 2"))
         compose.onNodeWithText("Reconnecting").assertExists()
+    }
+
+    @Test
+    fun theSimCardOpensAppSettingsWhenPhoneAccessIsBlocked() {
+        val blocked = PermissionWarning(WarningKind.PhoneState, blocked = true)
+        var fixed: PermissionWarning? = null
+        val state = HomeUiState(serverHost = "sms.example.com", sims = SimsInfo.NoPermission, warnings = listOf(blocked))
+        show { HomeContent(state, now, null, HomeActions(onFix = { fixed = it })) }
+        // The SIM card's button (the warnings card's one has a longer label).
+        val simButton = hasText("Open app settings").and(hasContentDescription("Open app settings: SIM list unavailable").not())
+        compose.onNode(hasScrollAction()).performScrollToNode(simButton)
+        compose.onNode(hasText("Allow")).assertDoesNotExist()
+        compose.onNode(simButton).assertHasClickAction().performClick()
+        assertEquals(blocked, fixed)
     }
 
     @Test
@@ -210,6 +226,8 @@ class ScreensSmokeTest {
             MainShellContent(tab, onTab = { tab = it }) { t -> Text("screen:${t.name}") }
         }
         compose.onNodeWithText("screen:Home").assertExists()
+        compose.onNodeWithTag(TAG_BOTTOM_BAR).assertExists()
+        compose.onNodeWithTag(TAG_RAIL).assertDoesNotExist()
         compose.onNode(hasText("Log").and(hasRole(Role.Tab))).assertHasClickAction().performClick()
         compose.waitForIdle()
         compose.onNodeWithText("screen:Log").assertExists()
@@ -223,7 +241,8 @@ class ScreensSmokeTest {
     fun wideScreensGetANavigationRail() {
         show { MainShellContent(Tab.Log, onTab = {}) { t -> Text("screen:${t.name}") } }
         compose.onNodeWithText("screen:Log").assertExists()
+        compose.onNodeWithTag(TAG_RAIL).assertExists()
+        compose.onNodeWithTag(TAG_BOTTOM_BAR).assertDoesNotExist()
         compose.onNode(hasText("Home").and(hasRole(Role.Tab))).assertHasClickAction()
-        assertTrue(true)
     }
 }

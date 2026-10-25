@@ -341,10 +341,17 @@ class AppGraph(context: Context) {
         batteryExempt = { Permissions.batteryExempt(app) },
         prefs = appSettings,
         phone = ::phoneInfo,
-        syncNow = { revocation.exclusive { if (credentialStore.load() != null) scheduler.syncNow() } },
+        syncNow = {
+            revocation.exclusive {
+                val paired = credentialStore.load() != null
+                if (paired) scheduler.syncNow()
+                paired
+            }
+        },
         lastSync = syncStatus.lastSuccess,
         now = System::currentTimeMillis,
         appVersion = BuildConfig.VERSION_NAME,
+        forgetAccount = appSettings::clear,
         log = ::warn,
     )
 

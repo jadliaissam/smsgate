@@ -16,16 +16,20 @@ import com.jassam.smsgate.work.isRevocation
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the settings screen uses (built from AppGraph; fakes in tests). */
 class SettingsDeps(
@@ -48,11 +52,13 @@ class SettingsDeps(
     val batteryExempt: () -> Boolean,
     val prefs: LocalPrefs,
     val phone: suspend () -> PhoneInfo,
-    /** One immediate sync (unique, KEEP). */
-    val syncNow: suspend () -> Unit,
+    /** One immediate sync (unique, KEEP). False when nothing was enqueued (not paired). */
+    val syncNow: suspend () -> Boolean,
     val lastSync: Flow<Long?>,
     val now: () -> Long,
     val appVersion: String,
+    /** Drops the cached account name/email of an unpaired device (the local label stays). */
+    val forgetAccount: suspend (deviceId: String) -> Unit = {},
     val io: CoroutineDispatcher = Dispatchers.IO,
     val log: (String) -> Unit = {},
 )
@@ -72,6 +78,9 @@ sealed interface DefaultSim {
 }
 
 enum class UnpairFailure { Network, Server }
+
+/** Feedback after "Sync now"; [None] shows the last sync time. */
+enum class SyncFeedback { None, Requested, Done }
 
 /** The unpair flow. */
 @Immutable
@@ -104,7 +113,7 @@ data class SettingsUiState(
     val deviceLabel: String? = null,
     val defaultSim: DefaultSim = DefaultSim.Loading,
     val theme: ThemeMode = ThemeMode.System,
-    val syncRequestedAt: Long? = null,
+    val sync: SyncFeedback = SyncFeedback.None,
     val lastSyncMs: Long? = null,
     val unpair: UnpairState = UnpairState.Idle,
     /** A local-preference write failed (label or theme). */
@@ -112,9 +121,6 @@ data class SettingsUiState(
 ) {
     /** Always connected without the exemption: Doze may drop the socket while unplugged. */
     val dozeWarning: Boolean get() = alwaysConnected && !batteryExempt
-
-    /** A requested sync has finished successfully since. */
-    val syncDone: Boolean get() = syncRequestedAt != null && lastSyncMs != null && lastSyncMs >= syncRequestedAt
 }
 
 /**
@@ -130,7 +136,7 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
         val exemptionPrompt: Boolean = false,
         val batteryExempt: Boolean = true,
         val defaultSim: DefaultSim = DefaultSim.Loading,
-        val syncRequestedAt: Long? = null,
+        val sync: SyncFeedback = SyncFeedback.None,
         val unpair: UnpairState = UnpairState.Idle,
         val saveFailed: Boolean = false,
     )
@@ -160,7 +166,7 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
             deviceLabel = p.label,
             defaultSim = l.defaultSim,
             theme = p.theme,
-            syncRequestedAt = l.syncRequestedAt,
+            sync = l.sync,
             lastSyncMs = p.lastSync,
             unpair = l.unpair,
             saveFailed = l.saveFailed,
@@ -236,10 +242,33 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
 
     // ---- Sync ----
 
+    private var syncJob: Job? = null
+
+    /**
+     * Requests one sync and shows "Syncing…" until a successful sync lands (then "Synced
+     * just now" for [SYNC_DONE_SHOW_MS]) or [SYNC_WAIT_MS] passes (offline: the job runs
+     * later), after which the last sync time shows again. Nothing enqueued (not paired)
+     * shows nothing.
+     */
     fun syncNow() {
-        val at = deps.now()
-        local.update { it.copy(syncRequestedAt = at) }
-        viewModelScope.launch { guarded("sync now") { deps.syncNow() } }
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch {
+            val at = deps.now()
+            val enqueued = guarded("sync now") { deps.syncNow() } ?: false
+            if (!enqueued) {
+                local.update { it.copy(sync = SyncFeedback.None) }
+                return@launch
+            }
+            local.update { it.copy(sync = SyncFeedback.Requested) }
+            val landed = withTimeoutOrNull(SYNC_WAIT_MS) {
+                deps.lastSync.catch { emit(null) }.first { it != null && it >= at }
+            } != null
+            if (landed) {
+                local.update { it.copy(sync = SyncFeedback.Done) }
+                delay(SYNC_DONE_SHOW_MS)
+            }
+            local.update { it.copy(sync = SyncFeedback.None) }
+        }
     }
 
     // ---- Unpair ----
@@ -263,7 +292,7 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
             val credentials = guarded("credentials") { deps.credentials() }
             if (credentials == null) {
                 // Nothing usable stored: the revocation path cancels leftover work if the store is empty.
-                finish(guarded("revoke") { deps.revoke(null) } ?: false)
+                finish(guarded("revoke") { deps.revoke(null) } ?: false, deviceId = null)
                 return@launch
             }
             val result = try {
@@ -276,7 +305,7 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
             }
             when {
                 result is ApiResult.Ok || (result != null && result.isRevocation) ->
-                    finish(guarded("revoke") { deps.revoke(credentials.deviceToken) } ?: false)
+                    finish(guarded("revoke") { deps.revoke(credentials.deviceToken) } ?: false, credentials.deviceId)
                 result is ApiResult.HttpError -> {
                     deps.log("unpair: HTTP ${result.status} ${result.code}")
                     local.update { it.copy(unpair = UnpairState.Failed(UnpairFailure.Server)) }
@@ -292,7 +321,7 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
         local.update { it.copy(unpair = UnpairState.Working) }
         viewModelScope.launch {
             val credentials = guarded("credentials") { deps.credentials() }
-            finish(guarded("revoke") { deps.revoke(credentials?.deviceToken) } ?: false)
+            finish(guarded("revoke") { deps.revoke(credentials?.deviceToken) } ?: false, credentials?.deviceId)
         }
     }
 
@@ -300,8 +329,10 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
      * After the revocation path ran. When it acted, the credential state flow takes
      * the app back to pairing; keep showing progress until then. When it did nothing
      * (the phone was re-paired meanwhile, so the old token no longer matches), go idle.
+     * When it acted, the unpaired device's cached account details are dropped.
      */
-    private fun finish(acted: Boolean) {
+    private suspend fun finish(acted: Boolean, deviceId: String?) {
+        if (acted && deviceId != null) guarded("forget account") { deps.forgetAccount(deviceId) }
         local.update { it.copy(unpair = if (acted) UnpairState.Working else UnpairState.Idle) }
     }
 
@@ -318,6 +349,12 @@ class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
 
     companion object {
         const val STOP_TIMEOUT_MS = 5_000L
+
+        /** How long "Syncing…" waits for the sync to land before falling back to the last sync time. */
+        const val SYNC_WAIT_MS = 60_000L
+
+        /** How long "Synced just now" stays. */
+        const val SYNC_DONE_SHOW_MS = 4_000L
 
         /**
          * The Doze rule (D12): ask for the exemption only when the socket would have to

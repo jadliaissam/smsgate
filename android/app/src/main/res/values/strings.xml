@@ -212,8 +212,6 @@
     <string name="log_step_sent">Sent to the carrier</string>
     <string name="log_step_delivered">Delivered to the recipient</string>
     <string name="log_step_failed">Failed</string>
-    <string name="log_step_expired">Not sent: expired</string>
-    <string name="log_step_expired_detail">It was past its validity window, so the phone didn’t send it.</string>
     <plurals name="log_parts">
         <item quantity="one">%d SMS part</item>
         <item quantity="other">%d SMS parts</item>
@@ -222,6 +220,8 @@
     <string name="log_parts_sent" tools:ignore="PluralsCandidate">%1$d of %2$d parts sent</string>
     <string name="log_parts_delivered" tools:ignore="PluralsCandidate">%1$d of %2$d parts delivered</string>
     <string name="log_error_with_code">%1$s (%2$s)</string>
+    <!-- Joins parts of one line, e.g. "SIM 1 · Orange · +212…". Quoted to keep the spaces. -->
+    <string name="list_separator">" · "</string>
 
     <string name="status_queued">Queued</string>
     <string name="status_dispatched">Dispatched</string>
@@ -298,7 +298,7 @@
     <string name="unpair_failed_server">The server couldn’t unpair this phone right now, so nothing was changed. Try again in a moment.</string>
     <string name="unpair_local">Remove from this phone only</string>
     <string name="unpair_local_title">Remove from this phone only?</string>
-    <string name="unpair_local_body">This phone forgets its pairing and stops sending. It stays listed on your dashboard until you revoke it there.</string>
+    <string name="unpair_local_body">This phone forgets its pairing and stops sending. Messages it already picked up won’t be sent and will show as failed on the dashboard later. The device stays listed on your dashboard until you revoke it there; new messages sent to it meanwhile will expire.</string>
     <string name="unpair_local_confirm">Remove from this phone</string>
 
     <!-- Open-source licences -->

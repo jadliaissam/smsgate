@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -27,6 +28,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class LogViewModelTest {
     private val vms = mutableListOf<LogViewModel>()
+    private var mappingDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null
 
     @After
     fun tearDown() {
@@ -50,7 +52,7 @@ class LogViewModelTest {
 
     private fun TestScope.vm(j: FakeJournal, recent: (Int) -> Flow<List<JournalSummary>> = j::recent): LogViewModel {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        val vm = LogViewModel(recent, j::entry)
+        val vm = LogViewModel(recent, j::entry, mapping = mappingDispatcher ?: UnconfinedTestDispatcher(testScheduler))
         vms += vm
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.detail.collect {} }
@@ -121,6 +123,19 @@ class LogViewModelTest {
         assertEquals(true, vm.detail.value?.bodyRemoved)
         vm.close()
         assertNull(vm.detail.value)
+    }
+
+    @Test
+    fun rowsAreMappedOnTheMappingDispatcher() = runTest {
+        // A separate (not yet run) dispatcher: nothing is mapped until it runs, so the
+        // mapping does not happen on Main.
+        val mapper = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        mappingDispatcher = mapper
+        val vm = vm(FakeJournal(2))
+        assertTrue(vm.state.value.loading)
+        runCurrent()
+        assertFalse(vm.state.value.loading)
+        assertEquals(2, vm.state.value.items.size)
     }
 
     private companion object {

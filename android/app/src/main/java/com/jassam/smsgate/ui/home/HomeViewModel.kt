@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -67,6 +69,7 @@ class HomeViewModel(private val deps: HomeDeps) : ViewModel() {
     private val local = MutableStateFlow(Local())
     private var accountJob: Job? = null
     private var deviceJob: Job? = null
+    private var pushJob: Job? = null
     private var lastAccountFetch = 0L
 
     private data class Live(val lastSync: Long?, val connection: ConnectionState, val always: Boolean, val label: String?)
@@ -101,6 +104,10 @@ class HomeViewModel(private val deps: HomeDeps) : ViewModel() {
     init {
         refreshAccount()
         refreshDevice()
+        // A sync may have sent the FCM token: re-check push readiness after each one.
+        viewModelScope.launch {
+            deps.lastSync.catch { }.distinctUntilChanged().drop(1).collect { refreshPush(restart = true) }
+        }
     }
 
     /** Screen resumed: re-read SIMs and push; refetch the account if it is stale or failed. */
@@ -177,14 +184,21 @@ class HomeViewModel(private val deps: HomeDeps) : ViewModel() {
     private fun refreshDevice() {
         if (deviceJob?.isActive == true) return
         deviceJob = viewModelScope.launch {
-            launch {
-                val info = guarded("phone info") { deps.phone() }
-                local.update { it.copy(sims = info?.let(HomeLogic::sims) ?: SimsInfo.NoPermission) }
-            }
-            launch {
-                val push = guarded("push status") { deps.push() } ?: PushStatus.NotRegistered
-                local.update { it.copy(push = push) }
-            }
+            val info = guarded("phone info") { deps.phone() }
+            local.update { it.copy(sims = info?.let(HomeLogic::sims) ?: SimsInfo.NoPermission) }
+        }
+        refreshPush()
+    }
+
+    /** [restart]: a check already running may predate what changed; start over. */
+    private fun refreshPush(restart: Boolean = false) {
+        if (pushJob?.isActive == true) {
+            if (!restart) return
+            pushJob?.cancel()
+        }
+        pushJob = viewModelScope.launch {
+            val push = guarded("push status") { deps.push() } ?: PushStatus.NotRegistered
+            local.update { it.copy(push = push) }
         }
     }
 

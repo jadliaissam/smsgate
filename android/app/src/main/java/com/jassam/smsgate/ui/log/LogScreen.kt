@@ -274,7 +274,6 @@ private fun stepCopy(step: TimelineStep): Pair<String, Tone> = when (step) {
     is TimelineStep.Sent -> stringResource(R.string.log_step_sent) to Tone.Brand
     is TimelineStep.Delivered -> stringResource(R.string.log_step_delivered) to Tone.Success
     is TimelineStep.Failed -> stringResource(R.string.log_step_failed) to Tone.Danger
-    is TimelineStep.Expired -> stringResource(R.string.log_step_expired) to Tone.Warning
 }
 
 @Composable
@@ -287,7 +286,6 @@ private fun stepDetail(step: TimelineStep): String? = when (step) {
         val text = friendlyText(step.friendly)
         step.code?.let { stringResource(R.string.log_error_with_code, text, it) } ?: text
     }
-    is TimelineStep.Expired -> stringResource(R.string.log_step_expired_detail)
 }
 
 @Composable

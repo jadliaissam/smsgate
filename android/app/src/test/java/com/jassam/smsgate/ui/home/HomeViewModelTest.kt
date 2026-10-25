@@ -52,6 +52,10 @@ class HomeViewModelTest {
         override suspend fun put(deviceId: String, info: AccountInfo) {
             stored = deviceId to info
         }
+
+        override suspend fun clear(deviceId: String) {
+            if (stored?.first == deviceId) stored = null
+        }
     }
 
     private class Fixture {
@@ -68,6 +72,7 @@ class HomeViewModelTest {
         var phone: suspend () -> PhoneInfo = { PhoneInfo(listOf(Sim(0, 11, "Orange")), 11) }
         var push: suspend () -> PushStatus = { PushStatus.Ok }
         var meCalls = 0
+        var pushCalls = 0
     }
 
     private fun TestScope.vm(f: Fixture, start: Long = at(2026, 10, 25, 12)): HomeViewModel {
@@ -86,7 +91,7 @@ class HomeViewModelTest {
             now = { start + testScheduler.currentTime },
             zone = { zone },
             phone = { f.phone() },
-            push = { f.push() },
+            push = { f.pushCalls++; f.push() },
         )
         val vm = HomeViewModel(deps)
         vms += vm
@@ -263,5 +268,33 @@ class HomeViewModelTest {
     fun aFailingCountsQueryShowsZeros() = runTest {
         val f = Fixture().apply { credentials = creds; counts = { kotlinx.coroutines.flow.flow { throw IllegalStateException("db") } } }
         assertEquals(DayCounts.ZERO, vm(f).state.value.today)
+    }
+
+    @Test
+    fun pushStatusIsRecheckedAfterEachSync() = runTest {
+        val f = Fixture().apply { credentials = creds; push = { PushStatus.NotRegistered } }
+        val vm = vm(f)
+        assertEquals(PushStatus.NotRegistered, vm.state.value.push)
+        assertEquals(1, f.pushCalls)
+        f.push = { PushStatus.Ok } // the sync sent the token
+        f.lastSync.value = 5_000L
+        assertEquals(PushStatus.Ok, vm.state.value.push)
+        assertEquals(2, f.pushCalls)
+        f.lastSync.value = 5_000L // unchanged: no new check
+        assertEquals(2, f.pushCalls)
+    }
+
+    @Test
+    fun aSyncRestartsAPushCheckAlreadyInFlight() = runTest {
+        val slow = CompletableDeferred<PushStatus>()
+        val f = Fixture().apply { credentials = creds; push = { slow.await() } }
+        val vm = vm(f)
+        assertEquals(PushStatus.Checking, vm.state.value.push)
+        f.push = { PushStatus.Ok }
+        f.lastSync.value = 1L
+        assertEquals(PushStatus.Ok, vm.state.value.push)
+        slow.complete(PushStatus.NotRegistered) // the stale check was cancelled
+        runCurrent()
+        assertEquals(PushStatus.Ok, vm.state.value.push)
     }
 }

@@ -227,8 +227,8 @@ private fun PhoneSection(state: SettingsUiState, nowMs: Long, actions: SettingsA
         InfoRow(stringResource(R.string.settings_default_sim), defaultSimText(state.defaultSim))
         CardDivider()
         val syncText = when {
-            state.syncDone -> stringResource(R.string.settings_sync_done)
-            state.syncRequestedAt != null -> stringResource(R.string.settings_sync_requested)
+            state.sync == SyncFeedback.Done -> stringResource(R.string.settings_sync_done)
+            state.sync == SyncFeedback.Requested -> stringResource(R.string.settings_sync_requested)
             state.lastSyncMs != null -> stringResource(R.string.settings_sync_last, sinceText(state.lastSyncMs, nowMs))
             else -> stringResource(R.string.settings_sync_never)
         }
@@ -255,7 +255,7 @@ private fun defaultSimText(sim: DefaultSim): String = when (sim) {
         stringResource(R.string.sim_slot, sim.sim.slot + 1),
         sim.sim.carrier.ifBlank { null },
         sim.sim.number,
-    ).joinToString(" · ")
+    ).joinToString(stringResource(R.string.list_separator))
 }
 
 @Composable

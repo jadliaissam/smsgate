@@ -80,4 +80,11 @@ class HomeLogicTest {
         assertEquals(SimsInfo.NoPermission, HomeLogic.sims(PhoneInfo(null, 11)))
         assertEquals(SimsInfo.Known(emptyList()), HomeLogic.sims(PhoneInfo(emptyList(), null)))
     }
+
+    @Test
+    fun theSimCardFixUsesTheWarningsBlockedFlag() {
+        val blocked = PermissionWarning(WarningKind.PhoneState, blocked = true)
+        assertEquals(blocked, HomeLogic.simFix(listOf(PermissionWarning(WarningKind.Sms), blocked)))
+        assertEquals(PermissionWarning(WarningKind.PhoneState, blocked = false), HomeLogic.simFix(emptyList()))
+    }
 }

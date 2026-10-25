@@ -70,6 +70,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) : LocalPrefs, M
         }
     }
 
+    override suspend fun clear(deviceId: String) {
+        dataStore.edit {
+            if (it[ME_DEVICE] == deviceId) {
+                it.remove(ME_DEVICE)
+                it.remove(ME_NAME)
+                it.remove(ME_EMAIL)
+            }
+        }
+    }
+
     private companion object {
         val THEME = stringPreferencesKey("theme")
         val LABEL = stringPreferencesKey("device_label")

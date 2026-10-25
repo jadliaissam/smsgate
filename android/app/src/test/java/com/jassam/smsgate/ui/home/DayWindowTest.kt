@@ -61,6 +61,25 @@ class DayWindowTest {
     }
 
     @Test
+    fun aMidnightThatDoesNotExistStartsTheDayAtTheFirstValidInstant() {
+        // Chile springs forward at 00:00 on 2026-09-06: clocks jump to 01:00.
+        val santiago = TimeZone.getTimeZone("America/Santiago")
+        val hour = 3_600_000L
+        val before = DayWindow.of(at(santiago, 2026, 9, 5, 12), santiago)
+        val gap = DayWindow.of(at(santiago, 2026, 9, 6, 12), santiago)
+        val after = DayWindow.of(at(santiago, 2026, 9, 7, 12), santiago)
+        assertEquals(before.endMs, gap.startMs)
+        assertEquals(gap.endMs, after.startMs)
+        assertEquals(24 * hour, before.endMs - before.startMs)
+        assertEquals(23 * hour, gap.endMs - gap.startMs)
+        assertEquals(24 * hour, after.endMs - after.startMs)
+        val start = GregorianCalendar(santiago).apply { timeInMillis = gap.startMs }
+        assertEquals(6, start.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(1, start.get(java.util.Calendar.HOUR_OF_DAY))
+        assertEquals(0, start.get(java.util.Calendar.MINUTE))
+    }
+
+    @Test
     fun windowsAdvanceAtEachMidnight() = runTest {
         val start = at(paris, 2026, 10, 24, 23, 59)
         val windows = dayWindows({ start + testScheduler.currentTime }, { paris }).take(3).toList()

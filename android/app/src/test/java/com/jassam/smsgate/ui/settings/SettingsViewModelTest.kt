@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -44,6 +45,7 @@ class SettingsViewModelTest {
         val prefs = FakePrefs()
         var phone: suspend () -> PhoneInfo = { PhoneInfo(listOf(Sim(0, 11, "Orange"), Sim(1, 22, "inwi")), 22) }
         var syncs = 0
+        var paired = true
         val lastSync = MutableStateFlow<Long?>(null)
         var now = 10_000L
         val connection = MutableStateFlow(ConnectionState.OFF)
@@ -64,7 +66,7 @@ class SettingsViewModelTest {
                 batteryExempt = { f.exempt },
                 prefs = f.prefs,
                 phone = { f.phone() },
-                syncNow = { f.syncs++ },
+                syncNow = { f.syncs++; f.paired },
                 lastSync = f.lastSync,
                 now = { f.now },
                 appVersion = "1.2.3",
@@ -181,17 +183,51 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun syncNowGivesFeedbackUntilTheSyncLands() = runTest {
+    fun syncFeedbackShowsDoneBrieflyOnceTheSyncLands() = runTest {
         val f = Fixture()
         val vm = vm(f)
         vm.syncNow()
         assertEquals(1, f.syncs)
-        assertEquals(10_000L, vm.state.value.syncRequestedAt)
-        assertFalse(vm.state.value.syncDone)
+        assertEquals(SyncFeedback.Requested, vm.state.value.sync)
         f.lastSync.value = 9_000 // an older sync does not count
-        assertFalse(vm.state.value.syncDone)
+        assertEquals(SyncFeedback.Requested, vm.state.value.sync)
         f.lastSync.value = 12_000
-        assertTrue(vm.state.value.syncDone)
+        assertEquals(SyncFeedback.Done, vm.state.value.sync)
+        advanceTimeBy(SettingsViewModel.SYNC_DONE_SHOW_MS + 1)
+        assertEquals(SyncFeedback.None, vm.state.value.sync)
+        assertEquals(12_000L, vm.state.value.lastSyncMs)
+    }
+
+    @Test
+    fun syncingNeverShowsForever() = runTest {
+        val f = Fixture()
+        val vm = vm(f)
+        vm.syncNow()
+        assertEquals(SyncFeedback.Requested, vm.state.value.sync)
+        advanceTimeBy(SettingsViewModel.SYNC_WAIT_MS - 1)
+        assertEquals(SyncFeedback.Requested, vm.state.value.sync)
+        advanceTimeBy(2)
+        assertEquals(SyncFeedback.None, vm.state.value.sync) // back to "Last sync …"
+    }
+
+    @Test
+    fun noFeedbackWhenNothingWasEnqueued() = runTest {
+        val f = Fixture().apply { paired = false }
+        val vm = vm(f)
+        vm.syncNow()
+        assertEquals(SyncFeedback.None, vm.state.value.sync)
+    }
+
+    @Test
+    fun aSecondTapRestartsTheWait() = runTest {
+        val f = Fixture()
+        val vm = vm(f)
+        vm.syncNow()
+        advanceTimeBy(SettingsViewModel.SYNC_WAIT_MS - 10)
+        vm.syncNow()
+        advanceTimeBy(20)
+        assertEquals(SyncFeedback.Requested, vm.state.value.sync)
+        assertEquals(2, f.syncs)
     }
 
     @Test

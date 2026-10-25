@@ -27,7 +27,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -60,6 +60,7 @@ class UnpairFlowTest {
     @Volatile private var stops = 0
     @Volatile private var abandons = 0
     @Volatile private var revokeCalls = 0
+    private val forgotten = java.util.Collections.synchronizedList(mutableListOf<String>())
     private lateinit var revocation: Revocation
     private val vms = mutableListOf<SettingsViewModel>()
 
@@ -100,10 +101,11 @@ class UnpairFlowTest {
                 batteryExempt = { true },
                 prefs = FakePrefs(),
                 phone = { PhoneInfo(emptyList(), null) },
-                syncNow = {},
+                syncNow = { true },
                 lastSync = flowOf(null),
                 now = { 0L },
                 appVersion = "1.2.3",
+                forgetAccount = { forgotten += it },
             ),
         )
         vms += vm
@@ -111,21 +113,31 @@ class UnpairFlowTest {
         return vm
     }
 
-    /** Polls (the state is a StateFlow kept hot by a collector) until [done] holds. */
+    /** Polls (the state is a StateFlow kept hot by a collector) until [done] holds; fails with the last state. */
     private fun SettingsViewModel.waitFor(done: (UnpairState) -> Boolean): UnpairState = runBlocking {
-        withTimeout(10_000) {
+        withTimeoutOrNull(10_000) {
             while (!done(state.value.unpair)) delay(10)
             state.value.unpair
+        } ?: throw AssertionError("unpair flow did not settle; last state ${state.value.unpair}, revoke calls $revokeCalls")
+    }
+
+    /**
+     * Waits for the flow's final state [expected]. Working and Idle are also shown while the
+     * request is in flight, so they count as final only once the revocation path has run
+     * (and, for Working, the account cache was dropped, the last step before the final state).
+     */
+    private fun SettingsViewModel.settle(expected: UnpairState): UnpairState = waitFor { s ->
+        s == expected && when (expected) {
+            UnpairState.Working -> revokeCalls > 0 && forgotten.isNotEmpty()
+            UnpairState.Idle -> revokeCalls > 0
+            else -> true
         }
     }
 
-    /** Settled: failed, or the revocation path ran (Working until AppRoot leaves, Idle if it did nothing). */
-    private fun SettingsViewModel.settle(): UnpairState = waitFor { it is UnpairState.Failed || revokeCalls > 0 }
-
-    private fun SettingsViewModel.unpair(): UnpairState {
+    private fun SettingsViewModel.unpair(expected: UnpairState): UnpairState {
         requestUnpair()
         confirmUnpair()
-        return settle()
+        return settle(expected)
     }
 
     private fun respond(code: Int, body: String = "", json: Boolean = true) {
@@ -136,6 +148,7 @@ class UnpairFlowTest {
 
     private fun assertRevokedWith(): Unit = runBlocking {
         assertNull(store.load())
+        assertEquals(listOf("dev-1"), forgotten.toList()) // cached account dropped, label kept
         assertEquals(1, cancelled)
         assertEquals(1, stops)
         assertEquals(1, abandons)
@@ -143,6 +156,7 @@ class UnpairFlowTest {
 
     private fun assertNothingCleared(): Unit = runBlocking {
         assertNotNull(store.load())
+        assertEquals(emptyList<String>(), forgotten.toList())
         assertEquals("dt_1", store.load()!!.deviceToken)
         assertEquals(0, cancelled)
         assertEquals(0, stops)
@@ -153,7 +167,7 @@ class UnpairFlowTest {
     fun noContentRevokesThroughRevocation() {
         respond(204)
         val vm = vm()
-        assertEquals(UnpairState.Working, vm.unpair())
+        vm.unpair(UnpairState.Working)
         val req = server.takeRequest(5, TimeUnit.SECONDS)!!
         assertEquals("POST", req.method)
         assertEquals("/device/v1/unregister", req.url.encodedPath)
@@ -164,21 +178,21 @@ class UnpairFlowTest {
     @Test
     fun alreadyRevoked401AlsoRevokesLocally() {
         respond(401, """{"error":{"code":"unauthorized","message":"revoked"}}""")
-        assertEquals(UnpairState.Working, vm().unpair())
+        vm().unpair(UnpairState.Working)
         assertRevokedWith()
     }
 
     @Test
     fun aBare401FromAProxyIsAFailureAndClearsNothing() {
         respond(401, "<html>401</html>", json = false)
-        assertEquals(UnpairState.Failed(UnpairFailure.Server), vm().unpair())
+        vm().unpair(UnpairState.Failed(UnpairFailure.Server))
         assertNothingCleared()
     }
 
     @Test
     fun aServerErrorShowsAnErrorAndClearsNothing() {
         respond(503, """{"error":{"code":"busy","message":"try later"}}""")
-        assertEquals(UnpairState.Failed(UnpairFailure.Server), vm().unpair())
+        vm().unpair(UnpairState.Failed(UnpairFailure.Server))
         assertNothingCleared()
     }
 
@@ -186,11 +200,11 @@ class UnpairFlowTest {
     fun aNetworkErrorClearsNothingAndRetryWorks() {
         server.enqueue(MockResponse.Builder().onResponseStart(SocketEffect.CloseSocket()).build())
         val vm = vm()
-        assertEquals(UnpairState.Failed(UnpairFailure.Network), vm.unpair())
+        vm.unpair(UnpairState.Failed(UnpairFailure.Network))
         assertNothingCleared()
         respond(204)
         vm.confirmUnpair() // "Try again" from the failure dialog
-        assertEquals(UnpairState.Working, vm.waitFor { revokeCalls > 0 && it == UnpairState.Working })
+        vm.settle(UnpairState.Working)
         assertRevokedWith()
     }
 
@@ -204,9 +218,10 @@ class UnpairFlowTest {
                 return MockResponse.Builder().code(204).build()
             }
         }
-        assertEquals(UnpairState.Idle, vm().unpair())
+        vm().unpair(UnpairState.Idle)
         runBlocking {
             assertEquals("dt_2", store.load()?.deviceToken)
+            assertEquals(emptyList<String>(), forgotten.toList())
             assertEquals(0, cancelled)
             assertEquals(0, stops)
         }
@@ -217,7 +232,7 @@ class UnpairFlowTest {
         val vm = vm()
         vm.requestLocalRemoval()
         vm.confirmLocalRemoval()
-        assertEquals(UnpairState.Working, vm.settle())
+        vm.settle(UnpairState.Working)
         assertRevokedWith()
         assertEquals(0, server.requestCount)
     }
@@ -226,10 +241,10 @@ class UnpairFlowTest {
     fun localRemovalIsOfferedAfterAFailure() {
         respond(500, """{"error":{"code":"internal","message":"boom"}}""")
         val vm = vm()
-        assertEquals(UnpairState.Failed(UnpairFailure.Server), vm.unpair())
+        vm.unpair(UnpairState.Failed(UnpairFailure.Server))
         vm.requestLocalRemoval()
         vm.confirmLocalRemoval()
-        assertEquals(UnpairState.Working, vm.waitFor { revokeCalls > 0 && it == UnpairState.Working })
+        vm.settle(UnpairState.Working)
         assertRevokedWith()
         assertEquals(1, server.requestCount)
     }

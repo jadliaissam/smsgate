@@ -5,14 +5,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jassam.smsgate.journal.JournalEntry
 import com.jassam.smsgate.journal.JournalSummary
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -35,6 +39,8 @@ class LogViewModel(
     private val observeRecent: (limit: Int) -> Flow<List<JournalSummary>>,
     private val observeEntry: (id: String) -> Flow<JournalEntry?>,
     private val log: (String) -> Unit = {},
+    /** Where rows are mapped (masking, formatting): off the main thread. */
+    private val mapping: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val limit = MutableStateFlow(PAGE)
     private val selected = MutableStateFlow<String?>(null)
@@ -43,6 +49,9 @@ class LogViewModel(
         .flatMapLatest { n ->
             observeRecent(n).map { rows -> LogUiState(loading = false, items = rows.map(LogFormat::item), canLoadMore = rows.size >= n && n < MAX) }
         }
+        // Only the newest list matters: a burst of journal changes maps once.
+        .flowOn(mapping)
+        .conflate()
         .catch { e ->
             log("log: journal unreadable: ${e.javaClass.simpleName}")
             emit(LogUiState(loading = false))
@@ -52,6 +61,7 @@ class LogViewModel(
     /** The open detail sheet's content; null when closed or the row is gone. */
     val detail: StateFlow<LogDetail?> = selected
         .flatMapLatest { id -> if (id == null) flowOf(null) else observeEntry(id).map { it?.let(LogFormat::detail) } }
+        .flowOn(mapping)
         .catch { e ->
             log("log: entry unreadable: ${e.javaClass.simpleName}")
             emit(null)

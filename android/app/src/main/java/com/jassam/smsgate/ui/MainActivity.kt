@@ -48,7 +48,12 @@ class MainActivity : ComponentActivity() {
             // System bar icons follow the app's theme, not only the system's.
             LaunchedEffect(dark) {
                 val style = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
-                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                if (SystemBars.transparentNavigationBar(Build.VERSION.SDK_INT)) {
+                    enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                } else {
+                    // API 24–25: keep the default semi-opaque scrim behind the light nav icons.
+                    enableEdgeToEdge(statusBarStyle = style)
+                }
             }
             SmsGateTheme(current) {
                 AppRoot(graph)

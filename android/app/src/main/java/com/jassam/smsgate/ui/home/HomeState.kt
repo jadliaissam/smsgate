@@ -18,6 +18,9 @@ data class AccountInfo(val name: String, val email: String) {
 interface MeCache {
     suspend fun get(deviceId: String): AccountInfo?
     suspend fun put(deviceId: String, info: AccountInfo)
+
+    /** Forgets the cached details if they belong to [deviceId] (unpair). */
+    suspend fun clear(deviceId: String)
 }
 
 /** Where the account details stand. */
@@ -120,6 +123,14 @@ object HomeLogic {
         if (!s.batteryExempt) add(PermissionWarning(WarningKind.Battery))
         if (s.oem != null && !s.oemAcknowledged) add(PermissionWarning(WarningKind.Oem))
     }
+
+    /**
+     * What the SIM card's "Allow" button fixes: the phone-state warning as the warnings
+     * card has it (blocked → open the app's settings), or a plain request when the
+     * warnings haven't been read yet.
+     */
+    fun simFix(warnings: List<PermissionWarning>): PermissionWarning =
+        warnings.firstOrNull { it.kind == WarningKind.PhoneState } ?: PermissionWarning(WarningKind.PhoneState)
 
     /** SIM cards for display, marking the default SMS SIM; null list = no permission. */
     fun sims(info: PhoneInfo): SimsInfo {
