@@ -13,8 +13,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * Heartbeat and catch-up: every 15 minutes ([Scheduler.SYNC_PERIODIC]), and once
  * right away after pairing, on app start and after each push ([Scheduler.SYNC_NOW]).
  *
- * In order: re-assert the periodic job (KEEP, while still paired); heartbeat (also
- * syncs the server clock); FCM token re-send if the server may not have the current
+ * In order: heartbeat (also syncs the server clock); re-assert the periodic job
+ * (KEEP, while these credentials are still current); FCM token re-send if the server may not have the current
  * one; fail stale SENDING rows ([CrashRecovery]); re-enqueue reports the server has
  * not confirmed (unique per (id, status), KEEP); `pending()` → a
  * [ProcessMessageWorker] per id not yet in the journal (unique per id, KEEP); resume
@@ -37,21 +37,21 @@ class SyncWorker(
         val api = deps.api(credentials)
         var offline = false
 
-        // Heals a post-pairing hook cut short by its timeout. Under the revocation lock
-        // and only while these credentials are current, so it can't undo a revocation.
-        step("periodic sync") {
-            deps.revocation.exclusive {
-                if (deps.credentials.load()?.deviceToken == credentials.deviceToken) deps.queue.schedulePeriodicSync()
-            }
-        }
-
         val heartbeat = step("heartbeat source") { deps.heartbeat.read() } ?: Heartbeat()
         when (val hb = api.heartbeat(heartbeat)) {
             is ApiResult.Ok -> Unit
             is ApiResult.NetworkError -> offline = true
             is ApiResult.HttpError -> {
-                if (hb.isUnauthorized) return revoked(credentials.deviceToken)
+                if (hb.isRevocation) return revoked(credentials.deviceToken)
                 deps.log("heartbeat: HTTP ${hb.status} ${hb.code}")
+            }
+        }
+
+        // Heals a post-pairing hook cut short by its timeout. Under the revocation lock
+        // and only while these credentials are current, so it can't undo a revocation.
+        step("periodic sync") {
+            deps.revocation.exclusive {
+                if (deps.credentials.load()?.deviceToken == credentials.deviceToken) deps.queue.schedulePeriodicSync()
             }
         }
 
@@ -75,7 +75,7 @@ class SyncWorker(
             }
             is ApiResult.NetworkError -> offline = true
             is ApiResult.HttpError -> {
-                if (pending.isUnauthorized) return revoked(credentials.deviceToken)
+                if (pending.isRevocation) return revoked(credentials.deviceToken)
                 deps.log("pending: HTTP ${pending.status} ${pending.code}")
             }
         }

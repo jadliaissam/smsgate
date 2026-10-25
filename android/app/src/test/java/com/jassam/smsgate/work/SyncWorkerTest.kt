@@ -192,6 +192,28 @@ class SyncWorkerTest {
     }
 
     @Test
+    fun noPeriodicReAssertWhenTheStoredTokenChangedDuringTheSync() = runBlocking {
+        // Revoked and re-paired while this sync (holding the old token) was running.
+        env.heartbeat = {
+            runBlocking { env.store.save(env.base, "dev-2", "dt_2") }
+            Heartbeat(appVersion = "1.2.3")
+        }
+        respondHeartbeat()
+        respondPending()
+        run()
+        assertEquals(0, env.queue.periodic)
+    }
+
+    @Test
+    fun aBare401HeartbeatDoesNotRevoke() = runBlocking {
+        env.respond(401, "")
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals("dt_1", env.store.deviceToken())
+        assertEquals(0, env.queue.cancelled)
+    }
+
+    @Test
     fun theCurrentFcmTokenIsReSentOnlyWhenTheServerMayNotHaveIt() = runBlocking {
         respondHeartbeat()
         respondPending()

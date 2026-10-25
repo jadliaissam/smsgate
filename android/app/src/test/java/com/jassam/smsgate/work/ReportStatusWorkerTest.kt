@@ -146,11 +146,35 @@ class ReportStatusWorkerTest {
     }
 
     @Test
-    fun anyEnvelopedClientErrorIsFinal() = runBlocking {
+    fun theBackendsFinalCodesAreAcked() = runBlocking {
+        for ((status, code) in listOf(400 to "invalid_json", 413 to "body_too_large", 415 to "unsupported_media_type", 422 to "invalid_status")) {
+            runBlocking { env.dao.deleteOlderThan(Long.MAX_VALUE) }
+            decided(Status.SENT)
+            env.respondError(status, code)
+            assertEquals(code, Result.success(), run(Status.SENT))
+            assertEquals(code, setOf(Status.SENT), acked())
+        }
+    }
+
+    @Test
+    fun otherEnvelopedErrorsAndRedirectsAreRetried() = runBlocking {
         decided(Status.SENT)
-        env.respondError(400, "invalid_json")
-        assertEquals(Result.success(), run(Status.SENT))
-        assertEquals(setOf(Status.SENT), acked())
+        env.respondError(404, "route_not_found")
+        assertEquals(Result.retry(), run(Status.SENT))
+        env.respondError(400, "something_new")
+        assertEquals(Result.retry(), run(Status.SENT))
+        env.respond(302) // a redirect OkHttp did not follow (no Location)
+        assertEquals(Result.retry(), run(Status.SENT))
+        assertTrue(acked().isEmpty())
+    }
+
+    @Test
+    fun aBare401FromAProxyIsRetriedNotRevoked() = runBlocking {
+        decided(Status.SENT)
+        env.respond(401, "<html>auth required</html>")
+        assertEquals(Result.retry(), run(Status.SENT))
+        assertEquals("dt_1", env.store.deviceToken())
+        assertEquals(0, env.queue.cancelled)
     }
 
     @Test

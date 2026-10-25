@@ -33,7 +33,7 @@ class FcmTokenWorker(
                 deps.sentTokens.remember(credentials.deviceId, token)
                 Result.success()
             }
-            result is ApiResult.HttpError && result.isUnauthorized -> {
+            result.isRevocation -> {
                 deps.revocation.onUnauthorized(credentials.deviceToken)
                 Result.failure()
             }

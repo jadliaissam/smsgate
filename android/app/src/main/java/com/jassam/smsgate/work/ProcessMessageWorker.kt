@@ -20,8 +20,9 @@ import kotlinx.coroutines.withContext
  *
  * 1. A journal row for the id already exists → stop (a duplicate push or job).
  * 2. `claim(id)`: only a 200 allows sending. 409 `already_claimed`, 410 `expired`,
- *    404 `message_not_found` → done, nothing sent. No response / 408 / 429 / 5xx /
- *    a 4xx without the backend's error code (proxy) → retry with exponential backoff,
+ *    404 `message_not_found` (exactly these codes) → done, nothing sent. No response /
+ *    408 / 429 / 5xx / 3xx / any other 404 / a 4xx without the backend's error code
+ *    (proxy, including a bare 401) → retry with exponential backoff,
  *    at most [MAX_CLAIM_ATTEMPTS] runs: a repeated claim is safe (409 if the server
  *    took it the first time, and then nothing is sent). WorkManager's run count also
  *    grows when the system stops the job (constraints lost, quota), so a flaky
@@ -31,7 +32,7 @@ import kotlinx.coroutines.withContext
  *    server clock and reports `failed/expired_on_device` itself. This part is not
  *    cancellable, so a stopped job can't drop a claimed message between the two.
  *
- * A 401 goes to [Revocation]. Bodies and numbers are never logged.
+ * A backend 401 ([isRevocation]) goes to [Revocation]. Bodies and numbers are never logged.
  */
 class ProcessMessageWorker(
     context: Context,
@@ -49,7 +50,7 @@ class ProcessMessageWorker(
         return when (val claim = deps.api(credentials).claim(id)) {
             is ApiResult.Ok -> withContext(NonCancellable) { journalAndSend(claim.value) }
             is ApiResult.HttpError -> when {
-                claim.isUnauthorized -> {
+                claim.isRevocation -> {
                     deps.revocation.onUnauthorized(credentials.deviceToken)
                     Result.failure()
                 }
@@ -58,11 +59,12 @@ class ProcessMessageWorker(
                     deps.log("claim $id: unreadable response; not sent")
                     Result.failure()
                 }
-                claim.isTransient -> retryClaim(id, claim.code)
-                claim.status == 404 || claim.status == 409 || claim.status == 410 -> {
+                isFinalClaimAnswer(claim) -> {
                     deps.log("claim $id: ${claim.code}")
                     Result.success()
                 }
+                // Transient, or a 404 that is not the backend's message_not_found (route_not_found, proxy).
+                claim.isTransient || claim.status == 404 -> retryClaim(id, claim.code)
                 else -> {
                     deps.log("claim $id: HTTP ${claim.status} ${claim.code}")
                     Result.failure()
@@ -71,6 +73,11 @@ class ProcessMessageWorker(
             is ApiResult.NetworkError -> retryClaim(id, "network")
         }
     }
+
+    private fun isFinalClaimAnswer(e: ApiResult.HttpError): Boolean =
+        (e.status == 404 && e.code == "message_not_found") ||
+            (e.status == 409 && e.code == "already_claimed") ||
+            (e.status == 410 && e.code == "expired")
 
     private fun retryClaim(id: String, why: String): Result {
         val last = runAttemptCount + 1 >= MAX_CLAIM_ATTEMPTS

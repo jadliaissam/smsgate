@@ -1,6 +1,8 @@
 package com.jassam.smsgate.work
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.Credentials
 import com.jassam.smsgate.auth.FakeTokenCipher
@@ -31,17 +33,18 @@ class RevocationTest {
     val tmp = TemporaryFolder()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private lateinit var dataStore: DataStore<Preferences>
+    private val cipher = FakeTokenCipher()
     private lateinit var store: CredentialStore
     private val cancels = AtomicInteger()
+    private val abandons = AtomicInteger()
     private lateinit var revocation: Revocation
 
     @Before
     fun setUp() {
-        store = CredentialStore(
-            PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(tmp.root, "c.preferences_pb") }),
-            FakeTokenCipher(),
-        )
-        revocation = Revocation(store, { cancels.incrementAndGet() })
+        dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(tmp.root, "c.preferences_pb") })
+        store = CredentialStore(dataStore, cipher)
+        revocation = Revocation(store, { cancels.incrementAndGet() }, { abandons.incrementAndGet() })
     }
 
     @After
@@ -55,6 +58,7 @@ class RevocationTest {
         assertTrue(revocation.onUnauthorized("dt_old"))
         assertNull(store.load())
         assertEquals(1, cancels.get())
+        assertEquals(1, abandons.get())
     }
 
     @Test
@@ -63,15 +67,30 @@ class RevocationTest {
         assertFalse(revocation.onUnauthorized("dt_old"))
         assertEquals(Credentials("https://a", "dev-2", "dt_new"), store.load())
         assertEquals(0, cancels.get())
+        assertEquals(0, abandons.get()) // the new pairing's CLAIMED rows are untouched
+    }
+
+    @Test
+    fun anUnreadableTokenCancelsWorkButKeepsClaimedRows() = runBlocking {
+        store.save("https://a", "dev-1", "dt_1")
+        cipher.keyLost = true // Keystore glitch: the token can't be decrypted right now
+        val fresh = CredentialStore(dataStore, cipher) // no cached token
+        val r = Revocation(fresh, { cancels.incrementAndGet() }, { abandons.incrementAndGet() })
+        assertTrue(r.onUnauthorized(null))
+        assertEquals(1, cancels.get())
+        assertEquals(0, abandons.get())
+        assertEquals(com.jassam.smsgate.auth.StoredCredentials.PRESENT, fresh.stored())
     }
 
     @Test
     fun noCredentialsCancelsOnlyWhileStillUnpaired() = runBlocking {
         assertTrue(revocation.onUnauthorized(null))
         assertEquals(1, cancels.get())
+        assertEquals(1, abandons.get()) // definitively unpaired
         store.save("https://a", "dev-1", "dt_1")
         assertFalse(revocation.onUnauthorized(null))
         assertEquals(1, cancels.get())
+        assertEquals(1, abandons.get())
     }
 
     @Test

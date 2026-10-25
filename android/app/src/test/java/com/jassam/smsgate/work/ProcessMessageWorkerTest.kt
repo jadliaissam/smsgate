@@ -123,7 +123,17 @@ class ProcessMessageWorkerTest {
     fun aProxyErrorWithoutTheBackendEnvelopeRetriesTheClaim() = runBlocking {
         env.respond(404, "<html>not found</html>")
         assertEquals(Result.retry(), run())
+        env.respondError(404, "route_not_found") // enveloped, but not the message's 404
+        assertEquals(Result.retry(), run())
         assertTrue(env.transport.sends.isEmpty())
+    }
+
+    @Test
+    fun aBare401FromAProxyRetriesInsteadOfRevoking() = runBlocking {
+        env.respond(401, "")
+        assertEquals(Result.retry(), run())
+        assertEquals("dt_1", env.store.deviceToken())
+        assertEquals(0, env.queue.cancelled)
     }
 
     @Test

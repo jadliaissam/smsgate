@@ -35,11 +35,12 @@ object PlayServices {
     /**
      * The FCM registration token, or null on failure or timeout (register goes
      * ahead without one). Never logged. Later tokens reach the server through
-     * `onNewToken` and the post-pairing FcmTokenWorker run (work/FcmTokenWorker.kt).
+     * `onNewToken`, and every sync re-sends the current one when the server may not
+     * have it (work/SyncWorker.kt, work/SentFcmTokens.kt).
      */
     // firebase-messaging 26 deprecates getToken() in favour of register() + onNewToken.
-    // register needs the token synchronously, and FcmTokenWorker re-reads it after pairing
-    // (closing the refresh-during-pairing gap), so the still-supported getToken() stays.
+    // register needs the token synchronously, and the sync re-reads it (closing the
+    // refresh-during-pairing gap), so the still-supported getToken() stays.
     @Suppress("DEPRECATION")
     suspend fun fcmToken(): String? = try {
         withTimeoutOrNull(FCM_TIMEOUT_MS) { FirebaseMessaging.getInstance().token.await() }?.takeIf { it.isNotBlank() }

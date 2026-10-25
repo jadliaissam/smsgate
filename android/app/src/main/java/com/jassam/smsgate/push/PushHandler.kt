@@ -15,6 +15,7 @@ class PushHandler(
     private val queue: WorkQueue,
     private val isPaired: suspend () -> Boolean,
     private val log: (String) -> Unit = {},
+    private val pairedCheckTimeoutMs: Long = PAIRED_CHECK_TIMEOUT_MS,
 ) {
     /**
      * `type == "new"` with a UUID `message_id` → expedited claim-and-send, unique per
@@ -47,7 +48,7 @@ class PushHandler(
     }
 
     private suspend fun pairedOrUnknown(): Boolean = try {
-        withTimeoutOrNull(PAIRED_CHECK_TIMEOUT_MS) { isPaired() } ?: true
+        withTimeoutOrNull(pairedCheckTimeoutMs) { isPaired() } ?: true
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

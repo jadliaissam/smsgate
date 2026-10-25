@@ -16,13 +16,14 @@ import kotlinx.coroutines.withContext
  * on attempts (the 15-minute sync also re-enqueues unacked reports).
  *
  * Final, so the journal marks it acked and it is never sent again:
- * - 200 (also the server's answer to a repeated, already-applied report);
- * - any 409 `invalid_transition` (the message is already in that or a later state);
- * - 404 `message_not_found`, 422 `invalid_*` and any other 4xx carrying the backend's
- *   error envelope: the server will never accept it; logged and dropped.
+ * - 2xx (also the server's answer to a repeated, already-applied report);
+ * - 409 `invalid_transition` (the message is already in that or a later state);
+ * - 4xx with one of the backend's codes [FINAL_CODES] or `invalid_*`
+ *   (`message_not_found`, `invalid_status`, `invalid_error_code`, `invalid_json`,
+ *   `body_too_large`, ...): the server will never accept it; logged and dropped.
  *
- * No response, 408, 429, 5xx and 4xx without the backend's envelope (a proxy's
- * `http_<status>`) retry. Any 401 goes to [Revocation].
+ * Every other answer retries (no response, 3xx, 5xx, `route_not_found`, a proxy's
+ * `http_<status>`, a bare 401). A backend 401 ([isRevocation]) goes to [Revocation].
  */
 class ReportStatusWorker(
     context: Context,
@@ -45,23 +46,25 @@ class ReportStatusWorker(
             is ApiResult.Ok -> ack(id, status)
             is ApiResult.NetworkError -> retry(id, status, "network")
             is ApiResult.HttpError -> when {
-                result.isUnauthorized -> {
+                result.isRevocation -> {
                     deps.revocation.onUnauthorized(credentials.deviceToken)
                     Result.failure()
                 }
                 result.status in 200..299 -> ack(id, status) // accepted; body unreadable
-                result.isTransient -> retry(id, status, result.code)
-                else -> {
-                    // The backend's own verdict (404 message_not_found, 409 invalid_transition,
-                    // 422 invalid_*, other enveloped 4xx): it will never accept this report.
+                isFinal(result) -> {
+                    // The backend's own verdict: it will never accept this report.
                     if (!(result.status == 409 && result.code == INVALID_TRANSITION)) {
                         deps.log("report ${status.wire} for $id dropped: HTTP ${result.status} ${result.code}")
                     }
                     ack(id, status)
                 }
+                else -> retry(id, status, result.code)
             }
         }
     }
+
+    private fun isFinal(e: ApiResult.HttpError): Boolean =
+        e.status in 400..499 && (e.code in FINAL_CODES || (e.code.startsWith("invalid_") && e.hasBackendCode))
 
     private fun retry(id: String, status: Status, why: String): Result {
         deps.log("report ${status.wire} for $id: $why; retrying")
@@ -83,6 +86,13 @@ class ReportStatusWorker(
         const val KEY_CODE = "error_code"
         const val KEY_MESSAGE = "error_message"
         private const val INVALID_TRANSITION = "invalid_transition"
+
+        /**
+         * The backend's codes that make a report final (plus every `invalid_*`:
+         * invalid_status, invalid_error_code, invalid_error_message, invalid_json).
+         * Everything else, even enveloped (route_not_found, ...), is retried.
+         */
+        private val FINAL_CODES = setOf("message_not_found", INVALID_TRANSITION, "body_too_large", "unsupported_media_type")
 
         fun input(id: String, status: Status, errorCode: String?, errorMessage: String?): Data =
             Data.Builder()

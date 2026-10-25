@@ -23,6 +23,18 @@ data class Credentials(val serverUrl: String, val deviceId: String, val deviceTo
     override fun toString(): String = "Credentials(serverUrl=$serverUrl, deviceId=$deviceId, deviceToken=***)"
 }
 
+/** What the store physically holds, without decrypting ([CredentialStore.stored]). */
+enum class StoredCredentials {
+    /** Nothing stored: definitively unpaired. */
+    NONE,
+
+    /** Values are stored (the token may still be undecryptable). */
+    PRESENT,
+
+    /** The store could not be read (I/O error). */
+    UNREADABLE,
+}
+
 /** Whether the app holds usable credentials. */
 sealed interface PairingState {
     data object Unpaired : PairingState
@@ -72,6 +84,19 @@ class CredentialStore(
                 it[TOKEN] = blob
             }
             cache = blob to deviceToken
+        }
+    }
+
+    /**
+     * Whether anything is stored, without touching the Keystore. Distinguishes a
+     * definitively unpaired store from one whose token is merely unreadable right now.
+     */
+    suspend fun stored(): StoredCredentials = withContext(Dispatchers.IO) {
+        try {
+            val p = dataStore.data.first()
+            if (p[SERVER_URL] == null && p[DEVICE_ID] == null && p[TOKEN] == null) StoredCredentials.NONE else StoredCredentials.PRESENT
+        } catch (_: IOException) {
+            StoredCredentials.UNREADABLE
         }
     }
 

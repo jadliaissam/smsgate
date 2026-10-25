@@ -90,6 +90,14 @@ class FcmTokenWorkerTest {
     }
 
     @Test
+    fun aBare401IsRetried() = runBlocking {
+        env.pair()
+        env.respond(401, "")
+        assertEquals(Result.retry(), run("fcm-new"))
+        assertEquals(0, env.queue.cancelled)
+    }
+
+    @Test
     fun unauthorizedRevokes() = runBlocking {
         env.pair()
         env.respondError(401, "unauthorized")

@@ -1,23 +1,31 @@
 package com.jassam.smsgate.work
 
 import com.jassam.smsgate.auth.CredentialStore
+import com.jassam.smsgate.auth.StoredCredentials
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * The single revocation path (Review Focus 4). Any 401 from the device API, including
- * the synthetic [com.jassam.smsgate.api.ApiResult.CODE_NO_CREDENTIALS], comes here:
- * the credentials are wiped only if they still hold the token the request used
+ * The single revocation path (Review Focus 4). Every backend 401 from the device API
+ * (enveloped, see [isRevocation]), and the synthetic
+ * [com.jassam.smsgate.api.ApiResult.CODE_NO_CREDENTIALS], comes here: the
+ * credentials are wiped only if they still hold the token the request used
  * ([CredentialStore.clearIfToken], never an unconditional clear), then all
  * WorkManager work is cancelled (process, report, sync and token jobs, so nothing
- * driven by FCM keeps running) and journal rows still CLAIMED are abandoned
- * ([CrashRecovery.abandonClaimed]) so a later pairing never sends them. The journal
- * itself is kept. The UI follows the credential state back to pairing on its own.
+ * driven by FCM keeps running). Journal rows still CLAIMED are abandoned
+ * ([CrashRecovery.abandonClaimed]) so a later pairing never sends them, but only
+ * when the credentials were really cleared or the store is definitively empty: a
+ * token that is just unreadable right now (Keystore/DataStore glitch) leaves them for
+ * recovery. The journal itself is kept. The UI follows the credential state back to
+ * pairing on its own.
  *
- * A send already handed to Android when the 401 arrives is not undone: its row stays
- * SENDING and a later pairing's recovery settles it as `outcome_unknown`.
+ * Not undone: a send already handed to Android (its row stays SENDING and a later
+ * pairing's recovery settles it as `outcome_unknown`), and a claim that returned 200
+ * just before the revocation, whose worker may journal the row after the abandon step
+ * and send it (that part is non-cancellable after a 200, by design); its report then
+ * fails against the new pairing with 404 and is dropped.
  *
  * [exclusive] runs the post-pairing scheduling under the same lock, so a revocation
  * decided while unpaired can't cancel the work a concurrent pairing just scheduled.
@@ -45,10 +53,12 @@ class Revocation(
             }
             log(if (cleared) "device revoked: credentials wiped, work cancelled" else "no credentials: work cancelled")
             cancelAllWork()
-            try {
-                abandonClaimed()
-            } catch (e: Exception) {
-                log("abandoning claimed rows failed: ${e.javaClass.simpleName}")
+            if (cleared || credentials.stored() == StoredCredentials.NONE) {
+                try {
+                    abandonClaimed()
+                } catch (e: Exception) {
+                    log("abandoning claimed rows failed: ${e.javaClass.simpleName}")
+                }
             }
             true
         }
