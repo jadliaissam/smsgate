@@ -12,9 +12,12 @@ FROM nginx:1.27-alpine
 # The official entrypoint renders /etc/nginx/templates/*.template into
 # /etc/nginx/conf.d at start. Only these variables are substituted, so nginx's
 # own $variables survive.
-ENV NGINX_ENVSUBST_FILTER="BACKEND_URL|NGINX_RESOLVER" \
+# APK_DOWNLOAD_URL: where /downloads/smsgate.apk redirects (a fork points it
+# at its own repository's releases).
+ENV NGINX_ENVSUBST_FILTER="BACKEND_URL|NGINX_RESOLVER|APK_DOWNLOAD_URL" \
     BACKEND_URL=http://srv-captain--smsgate-api:8080 \
-    NGINX_RESOLVER=127.0.0.11
+    NGINX_RESOLVER=127.0.0.11 \
+    APK_DOWNLOAD_URL=https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY nginx/security.conf nginx/proxy.conf /etc/nginx/snippets/
 COPY --from=build /app/dist /usr/share/nginx/html

@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-25 (A0 to A8 done and merged; A9 next).
+Last updated: 2026-10-25 (A0 to A8 done and merged; A9 implemented on `feat/android-a9`, first release not tagged yet; A10 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -37,7 +37,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 
 **Where things stand in git:**
 - `main` holds the backend, the complete dashboard, CI/CD and this file. It is what runs in production (revision `3d5b2bf` before the history rewrite; the same code now has new hashes). Merging to `main` deploys.
-- `main` also holds the Android work A0 to A8 and the backend device WebSocket (migrations `00006` and `00007`), merged on 2026-10-25. The Android app is not released yet: no APK is published. Continue the Android plan on a new branch from `main` (for example `feat/android-a9`) and merge by pull request.
+- `main` also holds the Android work A0 to A8 and the backend device WebSocket (migrations `00006` and `00007`), merged on 2026-10-25. The Android app is not released yet: no APK is published. A9 (release pipeline and dashboard download) is on branch `feat/android-a9`; merge it by pull request, then tag the first release (see A9 notes below).
 - On 2026-10-24 all commit messages on `main` and `feat/android-app` were rewritten to remove AI co-author trailers. Code is unchanged. Local backup branches `backup/main-before-rewrite` and `backup/android-before-rewrite` hold the old history; delete them when no longer wanted.
 - `smsgate-e5a24-*.json` (Firebase service-account key) is git-ignored; never commit it. `google-services.json` (Android Firebase config) is private and git-ignored everywhere; copy it into `android/app/` for local builds. CI reads it from the GitHub secret `GOOGLE_SERVICES_JSON_BASE64`.
 - `.superpowers/sdd/` holds the detailed progress ledgers, including every ruling and deferred minor issue (`2026-10-24-android-app/progress.md` is the Android one). It is git-ignored, so it exists only on the original machine. If it is missing, this file and `git log` are the record.
@@ -50,8 +50,8 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** continue the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A9 (release pipeline and APK download), on a new branch from `main`. A5 to A8 (journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens) are approved and merged. Notes for A9 and A10:
-   - A9: the release APK is about 2.7 MB unsigned. Keep `compose-ui-test-manifest` as `debugImplementation`. The licences screen lists libraries in `ui/settings/LicencesScreen.kt`; update it if release libraries change. Release signing needs a keystore and the GitHub secrets listed under "Release signing" below.
+**Suggested next step:** finish A9 (review, merge, tag the first release), then A10 (end-to-end on a real phone). A5 to A8 (journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens) are approved and merged. Notes for A9 and A10:
+   - A9 (implemented, not yet reviewed or merged): a tag `android-v<semver>` runs the `release` job in `.github/workflows/android.yml`: it validates the tag, builds and signs `assembleRelease`, runs `apksigner verify`, deletes the keystore, and publishes a GitHub Release with `smsgate.apk` and `mapping-<tag>.txt` (pre-release tags such as `-rc1` are marked pre-release and never become "latest"). versionCode is the workflow run number; renaming or recreating `android.yml` would restart it at 1 and break updates, so don't. The web image's nginx redirects `/downloads/smsgate.apk` (302, no-store) to `APK_DOWNLOAD_URL`, by default `https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk`. The Docs APK card and the pairing dialog's step 1 link there; the card checks with a same-origin `HEAD` that does not follow the redirect, so it shows "Download APK" as soon as the redirect exists, **even before any release exists** (the GitHub URL answers 404 until then). So tag the first stable release (for example `android-v1.0.0`) before or right after merging A9 to `main`. Still to do by hand: push the tag (ask the user first), check the Release has `smsgate.apk`, download it from the live dashboard link and install it on a real phone (plan Task 9 step 2). The release APK is about 2.7 MB unsigned. Keep `compose-ui-test-manifest` as `debugImplementation`. The licences screen lists libraries in `ui/settings/LicencesScreen.kt`; update it if release libraries change.
    - A10 real-phone checks: QR scan (portrait and landscape) and the confirmation dialog; OEM battery screens; deep-Doze ping spacing with and without the battery exemption (an inexact alarm may fire only once per 9 minutes, longer than the server's 6-minute idle timeout, so the socket may drop and messages then arrive by FCM); sticky restart refused on API 31+; carrier NAT timeouts; reconnect herd after a deploy; alarm wake-up rate; `specialUse` on API 34 and 35; cold start and theme flash; main-thread binder calls on Home and Settings; TalkBack; 200 % font at 320 dp; unpair from Settings; time-zone change while Home is open; instrumented Keystore round-trip.
 
 **Rules that apply:**
@@ -133,7 +133,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | "long after expiry" for lost devices | 15 minutes after `expires_at`, set by `DEVICE_LOST_AFTER` | backend plan |
 | Rate limits come in build step 7 | in-process rate limits already exist | added in the backend final review hardening |
 | Plans limit messages and devices | the `plans` table is seeded, but quotas and device limits are **not enforced** yet | build step 6 |
-| Dashboard includes Webhooks, Billing and APK download | not built; the docs page shows webhooks as coming soon and the APK card as not available | webhooks and billing need backend build steps 4 and 6; there is no APK yet |
+| Dashboard includes Webhooks, Billing and APK download | webhooks and billing not built (the docs page shows webhooks as coming soon); the APK download redirects to the latest GitHub Release (A9) | webhooks and billing need backend build steps 4 and 6 |
 
 ## Status at a glance
 
@@ -145,7 +145,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 to A8 approved (after fix rounds) and merged. A9 and A10 not started |
+| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 to A8 approved (after fix rounds) and merged. A9 (release pipeline, dashboard download) implemented on `feat/android-a9`, first release not tagged. A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
 Live dashboard: https://smsgate-web.captain-1.duckdns.org. The device WebSocket (`/device/v1/ws`) is live since 2026-10-25; no phone has connected to it yet.
@@ -177,7 +177,7 @@ smsgate/
   docs/specs/              design spec
   docs/superpowers/plans/  implementation plans (backend core, web dashboard, Android app)
   scripts/smoke.sh         end-to-end smoke test against a running server
-  .github/workflows/       CI and deploy (backend.yml, web.yml)
+  .github/workflows/       CI and deploy (backend.yml, web.yml), Android CI and release (android.yml)
   Makefile                 dev targets
   docker-compose.dev.yml   local Postgres 17
   .superpowers/sdd/        progress ledgers and review notes (git-ignored, local only)
@@ -231,7 +231,7 @@ smsgate/
 - Vite, React 19, TypeScript, Tailwind CSS v4 (no other styling).
 - TanStack Router with lazy routes and view transitions, and TanStack Query.
 - `uqr` for QR codes.
-- Vitest and Testing Library for tests (497 passing).
+- Vitest and Testing Library for tests (504 passing).
 
 **Pages:**
 - Sign-up, login, email verification.
@@ -251,6 +251,7 @@ smsgate/
 - **Proxy:** nginx serves the app and proxies `/app`, `/v1`, `/device` and `/healthz` to the backend's internal address (`BACKEND_URL`), so the browser talks to one origin.
 - **Security headers:** strict CSP, HSTS, `X-Frame-Options`.
 - **Caching:** immutable caching for `/assets`, no caching for `index.html`.
+- **APK download:** `/downloads/smsgate.apk` answers 302 (no-store) to `APK_DOWNLOAD_URL`, the latest GitHub Release asset by default.
 - **Bundle budget:** `scripts/check-bundle.mjs` fails the build above 200 KB entry JS or 40 KB CSS (gzip).
 
 ## Deployment (CapRover)
@@ -261,7 +262,7 @@ The server is https://captain.captain-1.duckdns.org. The CapRover password is in
 |---|---|---|---|
 | `smsgate-db` | `postgres:17-alpine` | internal only | persistent volume `smsgate-db-data` |
 | `smsgate-api` | `backend/` image | internal only, port 8080 | `APP_ENV=prod`, `DATABASE_URL`, `PUBLIC_URL=https://smsgate-web.captain-1.duckdns.org`, `MAILER=log` |
-| `smsgate-web` | `web/` image | public, HTTPS forced | `BACKEND_URL=http://srv-captain--smsgate-api:8080` |
+| `smsgate-web` | `web/` image | public, HTTPS forced | `BACKEND_URL=http://srv-captain--smsgate-api:8080` (`APK_DOWNLOAD_URL` keeps its image default) |
 
 The browser reaches the API only through the web app's nginx. `PUBLIC_URL` is therefore the web app's address; it is used in verification links and in the pairing QR code.
 
@@ -282,6 +283,8 @@ Repository: https://github.com/jadliaissam/smsgate. `main` holds everything and 
 1. **test:** backend runs gofmt, vet, the sqlc drift check, race tests against Postgres and the smoke test; web runs lint, typecheck, tests and the build with the bundle budget.
 2. **image:** builds the Docker image on GitHub with a `REVISION` build arg. On `main` it pushes `ghcr.io/jadliaissam/smsgate-{api,web}:<sha>` and `:latest`; elsewhere it only builds.
 3. **deploy** (`main` only): `caprover deploy --imageName <sha tag>`, so CapRover only pulls and runs the image. It then polls the live site for up to 5 minutes until it reports the new revision (`/revision.txt` for web, `/healthz` `.revision` for the API through the web proxy), and fails otherwise.
+
+**Android** (`.github/workflows/android.yml`, changes under `android/`): token drift check, lint, unit tests and a debug build on every push and pull request; a tag `android-v<semver>` also runs the signed `release` job and publishes `smsgate.apk` as a GitHub Release asset (see the README's "Release procedure"). Secrets `GOOGLE_SERVICES_JSON_BASE64`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` are set.
 
 **CapRover registry:** a ghcr.io registry login (user `jadliaissam`) lets CapRover pull the images. It currently uses the broad token from `/Users/eps/github_token.txt`; replacing it with a token that only has `read:packages` is recommended. Default push registry is disabled, so CapRover never pushes images.
 

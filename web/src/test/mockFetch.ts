@@ -11,6 +11,11 @@ export interface MockRoute {
   headers?: Record<string, string>
   /** Reject the fetch (simulates a network failure). */
   networkError?: boolean
+  /**
+   * Answer as a browser does for `redirect: 'manual'` when the server
+   * redirects: type "opaqueredirect", status 0, no readable headers.
+   */
+  opaqueRedirect?: boolean
   /** Serve at most once, then fall through to later routes. */
   once?: boolean
   /** Hold the response until this settles (observe loading states). */
@@ -23,6 +28,8 @@ export interface RecordedCall {
   headers: Record<string, string>
   body: unknown
   credentials: RequestCredentials | undefined
+  redirect: RequestRedirect | undefined
+  cache: RequestCache | undefined
 }
 
 export interface FetchMock {
@@ -66,7 +73,7 @@ export function mockFetch(routes: MockRoute[] = []): FetchMock {
         // leave non-JSON bodies as-is
       }
     }
-    calls.push({ method, path, headers, body, credentials: init?.credentials })
+    calls.push({ method, path, headers, body, credentials: init?.credentials, redirect: init?.redirect, cache: init?.cache })
 
     const i = table.findIndex((r) => matches(r, method, path))
     if (i < 0) throw new Error(`mockFetch: no route for ${method} ${path}`)
@@ -74,6 +81,7 @@ export function mockFetch(routes: MockRoute[] = []): FetchMock {
     if (route.once) table.splice(i, 1)
     if (route.until) await route.until.catch(() => undefined)
     if (route.networkError) throw new TypeError('Failed to fetch')
+    if (route.opaqueRedirect) return opaqueRedirect()
 
     const status = route.status ?? 200
     const resHeaders = new Headers(route.headers)
@@ -98,6 +106,15 @@ export function mockFetch(routes: MockRoute[] = []): FetchMock {
       ),
     use: (...more) => table.unshift(...more),
   }
+}
+
+/** What fetch resolves to for a redirect when `redirect: 'manual'` is set. */
+function opaqueRedirect(): Response {
+  const res = new Response(null, { status: 200 })
+  for (const [key, value] of Object.entries({ type: 'opaqueredirect', status: 0, ok: false, statusText: '' })) {
+    Object.defineProperty(res, key, { value })
+  }
+  return res
 }
 
 /** Convenience for the backend error envelope. */

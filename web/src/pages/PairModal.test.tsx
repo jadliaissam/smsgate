@@ -54,6 +54,9 @@ describe('PairModal', () => {
     expect(within(dialog).getByRole('img', { name: /pairing qr code/i })).toBeInTheDocument()
     expect(within(dialog).getByRole('timer')).toHaveTextContent('5:00')
     expect(m.callsTo('POST', '/app/pairing-codes')).toHaveLength(1)
+    // Step 1 links to the APK (nginx redirects it to the latest GitHub release).
+    expect(within(dialog).getByRole('link', { name: /smsgate app/i })).toHaveAttribute('href', '/downloads/smsgate.apk')
+    expect(within(dialog).getByText(/android 7\.0\+/i)).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: /copy code/i }))
     await expect(navigator.clipboard.readText()).resolves.toBe('ABCD2345')

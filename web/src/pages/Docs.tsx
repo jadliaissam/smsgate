@@ -565,6 +565,14 @@ function ApkCard() {
                   Devices
                 </Link>
                 .{apk.data.size !== null && <span className="text-fg-subtle"> APK · {formatSize(apk.data.size)}</span>}
+                <span className="mt-1 block text-[13px] text-fg-subtle">
+                  Requires Android 7.0 or later. On the phone, open{' '}
+                  <span className="break-all">
+                    <C>{`${window.location.origin}${APK_URL}`}</C>
+                  </span>
+                  ; when Android asks, choose <span className="font-medium text-fg-muted">Allow installs from this source</span>{' '}
+                  (Android 7: turn on Unknown sources in Settings › Security).
+                </span>
               </>
             ) : (
               <>

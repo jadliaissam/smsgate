@@ -6,6 +6,7 @@ Public SMS-gateway service: developers send SMS through an HTTP API, paired Andr
 
 - `backend/` Go service (module `github.com/smsgate/backend`), Dockerfile and CapRover `captain-definition`
 - `web/` React SPA dashboard (Vite), nginx Dockerfile and CapRover `captain-definition`
+- `android/` Android app (Kotlin, Jetpack Compose), shipped as a signed APK through GitHub Releases
 - `scripts/smoke.sh` end-to-end smoke test (bash, curl, jq)
 - `docs/` design spec and implementation plans
 
@@ -154,14 +155,15 @@ Migrations run automatically at startup under a Postgres advisory lock, so sever
 
 ## Web dashboard deployment
 
-`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache, `/revision.txt` with the `REVISION` build arg, no-store), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/device/` (which carries the device WebSocket) has 7-minute proxy read and send timeouts so an idle socket with 5-minute client pings survives; the other API routes keep 75 s. `/downloads/` serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
+`web/` builds into an nginx image (`web/Dockerfile`, classic builder, no BuildKit features). nginx serves the SPA (history fallback to `index.html`, hashed `/assets/` cached as immutable, `index.html` no-cache, `/revision.txt` with the `REVISION` build arg, no-store), sets the security headers (CSP `default-src 'self'`, HSTS, `X-Frame-Options DENY`, ...) and reverse-proxies `/app/`, `/v1/`, `/device/` and `/healthz` to the API, so the browser only ever talks to one origin. `/device/` (which carries the device WebSocket) has 7-minute proxy read and send timeouts so an idle socket with 5-minute client pings survives; the other API routes keep 75 s. `/downloads/smsgate.apk` answers `302` to `APK_DOWNLOAD_URL` (the latest Android release on GitHub, `Cache-Control: no-store` so a new release is picked up at once); any other `/downloads/` path serves `/usr/share/nginx/downloads` (mount a volume there; no directory listing).
 
 | Env var | Default | Meaning |
 |---|---|---|
 | `BACKEND_URL` | `http://srv-captain--smsgate-api:8080` | API base URL (CapRover internal address of the API app) |
 | `NGINX_RESOLVER` | `127.0.0.11` | DNS server nginx uses to resolve `BACKEND_URL` at request time (Docker's embedded DNS on CapRover/Swarm), so the web app starts even when the API is not up yet |
+| `APK_DOWNLOAD_URL` | `https://github.com/jadliaissam/smsgate/releases/latest/download/smsgate.apk` | Where `/downloads/smsgate.apk` redirects; a fork points it at its own releases |
 
-Both are substituted into `web/nginx/default.conf.template` at container start; nothing else is substituted, so nginx's own `$variables` are untouched.
+These are substituted into `web/nginx/default.conf.template` at container start; nothing else is substituted, so nginx's own `$variables` are untouched.
 
 CapRover: create the `smsgate-web` app, enable HTTPS and force HTTPS (the public entry point); CI deploys it (see [Deployment pipeline](#deployment-pipeline)). For the device WebSocket, turn on **Websocket Support** in its HTTP Settings and, since CapRover's own nginx uses nginx's default 60 s proxy read timeout and would cut an idle socket, add `proxy_read_timeout 7m; proxy_send_timeout 7m;` to its `location /` block via **Edit Default Nginx Configurations**. Set the API's `PUBLIC_URL` to this app's public origin. The image has a `HEALTHCHECK` on `/`.
 
@@ -176,6 +178,36 @@ docker run --rm -p 8081:80 -e BACKEND_URL=http://host.docker.internal:8080 \
 `npm run build` runs `web/scripts/check-bundle.mjs` (postbuild), which fails if the entry JS chunk exceeds 200 KB gzip or the CSS exceeds 40 KB gzip.
 
 CI (`.github/workflows/web.yml`): changes under `web/` run lint, typecheck, tests and build (with the bundle budget) plus a Docker image build; a push to `main` also deploys (see below).
+
+## Android app
+
+`android/` is the phone side: it pairs with an account, is woken by FCM (or keeps a WebSocket open when "always connected" is on), claims each message and sends it as a normal SMS from the chosen SIM. Android 7.0 (API 24) or later.
+
+### Install and pair
+
+1. On the phone, open `<dashboard origin>/downloads/smsgate.apk` (the **Download APK** button on the dashboard's Docs page and the link in the **Pair a phone** dialog point there). nginx redirects to the APK of the latest GitHub Release.
+2. Open the downloaded file. Android asks for permission to install apps from the browser: choose **Allow installs from this source** (Android 8+; on Android 7 turn on **Unknown sources** in Settings › Security), then install. Updates install the same way over the old version, keeping the pairing.
+3. In the dashboard, Devices › **Pair a phone** shows a QR code and a typed code; in the app, scan it (or type the code), then grant the SMS and notification permissions the checklist asks for.
+
+### Release procedure
+
+Releases are cut by pushing a tag; nothing is built or signed on a developer machine.
+
+    git tag android-v1.0.0      # android-v<semver>; android-v1.1.0-rc1 for a pre-release
+    git push origin android-v1.0.0
+
+`.github/workflows/android.yml` then runs the normal checks (token drift, lint, unit tests, debug build) and the `release` job, which:
+
+- rejects a tag that is not `android-v<semver>` with an error, before touching any secret;
+- sets `versionName` to the tag without `android-v` and `versionCode` to the workflow run number (it only grows, so every later tag can update an installed app);
+- decodes the keystore and `google-services.json` from secrets, builds `assembleRelease` (R8), checks the signature with `apksigner verify` and deletes the keystore afterwards, even on failure;
+- publishes a GitHub Release named after the tag with `smsgate.apk` and `mapping-<tag>.txt` (to de-obfuscate crash traces). A plain version becomes the repository's latest release, so the dashboard link serves it immediately; a pre-release tag (with `-`, for example `-rc1`) is marked pre-release and never becomes latest.
+
+Required repository secrets: `GOOGLE_SERVICES_JSON_BASE64`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Only the release job sees the keystore secrets, and it is the only job with `contents: write`.
+
+**Back up the release keystore and its passwords outside this repository.** Android only installs an update signed with the same key: if the keystore is lost, every installed phone has to uninstall the app (losing its pairing) to move to a newly signed build. Never commit the keystore, its passwords or `google-services.json`; the repository and the APK are public.
+
+Local release build (optional): put the keystore path and passwords in the git-ignored `android/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the env vars `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; without them `assembleRelease` produces an unsigned APK.
 
 ## Deployment pipeline
 

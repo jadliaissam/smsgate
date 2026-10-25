@@ -1,6 +1,7 @@
-# Rendered by the nginx image entrypoint (envsubst, filtered to BACKEND_URL and
-# NGINX_RESOLVER). A variable proxy_pass plus resolver lets nginx start before
-# the API container exists and re-resolve its address as it changes.
+# Rendered by the nginx image entrypoint (envsubst, filtered to BACKEND_URL,
+# NGINX_RESOLVER and APK_DOWNLOAD_URL). A variable proxy_pass plus resolver
+# lets nginx start before the API container exists and re-resolve its address
+# as it changes.
 
 map $http_x_forwarded_proto $fwd_proto {
     default $http_x_forwarded_proto;
@@ -78,6 +79,16 @@ server {
         add_header Cache-Control "no-cache" always;
     }
 
+    # The Android APK is published as a GitHub Release asset; send the
+    # dashboard's download link there. no-store so a new release is picked up
+    # at once (the target URL stays the same, the asset behind it changes).
+    location = /downloads/smsgate.apk {
+        include /etc/nginx/snippets/security.conf;
+        add_header Cache-Control "no-store" always;
+        return 302 "${APK_DOWNLOAD_URL}";
+    }
+
+    # Other downloads, from a mounted volume.
     location /downloads/ {
         alias /usr/share/nginx/downloads/;
         autoindex off;

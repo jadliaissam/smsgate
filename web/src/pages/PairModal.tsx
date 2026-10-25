@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { encode } from 'uqr'
+import { APK_URL } from '../api/apk'
 import { isApiError } from '../api/client'
 import { errorCopy } from '../api/errors'
 import { useCreatePairingCode, useDevices } from '../api/queries'
@@ -8,7 +9,7 @@ import { MailIcon } from '../layout/icons'
 import { ResendButton } from '../layout/ResendButton'
 import { Button } from '../ui/Button'
 import { CopyButton } from '../ui/CopyButton'
-import { cx } from '../ui/cx'
+import { cx, focusRing } from '../ui/cx'
 import { AlertIcon } from '../ui/icons'
 import { Modal } from '../ui/Modal'
 import { Skeleton } from '../ui/Skeleton'
@@ -194,7 +195,17 @@ function PairFlow({ active, onDone }: { active: boolean; onDone: () => void }) {
 
       <div className="min-w-0">
         <ol className="space-y-3">
-          <Step n={1}>Install the SMSGate app (APK) on your Android phone.</Step>
+          <Step n={1}>
+            Install the{' '}
+            <a
+              href={APK_URL}
+              download
+              className={cx('rounded font-medium text-brand-700 hover:underline dark:text-brand-300', focusRing)}
+            >
+              SMSGate app
+            </a>{' '}
+            on your phone (Android 7.0+).
+          </Step>
           <Step n={2}>Open the app and choose to pair with a QR code.</Step>
           <Step n={3}>Scan this code — or type the code below.</Step>
         </ol>

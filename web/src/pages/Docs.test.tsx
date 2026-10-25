@@ -128,6 +128,20 @@ describe('Docs', () => {
     expect(m.callsTo('HEAD', '/downloads/smsgate.apk')).toHaveLength(1)
   })
 
+  it('offers the APK when nginx redirects to the latest release, without a size', async () => {
+    const m = setup([{ method: 'HEAD', path: '/downloads/smsgate.apk', opaqueRedirect: true }])
+    renderApp('/docs')
+    const link = await screen.findByRole('link', { name: /download apk/i })
+    expect(link).toHaveAttribute('href', '/downloads/smsgate.apk')
+    const card = screen.getByRole('region', { name: /android app/i })
+    expect(within(card).queryByText(/\bMB\b/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/not available yet/i)).not.toBeInTheDocument()
+    expect(card).toHaveTextContent(/Android 7\.0 or later/)
+    expect(card).toHaveTextContent(/Allow installs from this source/)
+    expect(card).toHaveTextContent(`${window.location.origin}/downloads/smsgate.apk`)
+    expect(m.callsTo('HEAD', '/downloads/smsgate.apk')[0]).toMatchObject({ redirect: 'manual' })
+  })
+
   it('shows "coming soon" when the APK is missing', async () => {
     setup()
     renderApp('/docs')

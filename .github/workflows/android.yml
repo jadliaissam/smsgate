@@ -88,8 +88,12 @@ jobs:
 
   release:
     # Tag android-v<semver> → signed release APK attached to a GitHub Release as smsgate.apk.
+    # A pre-release tag (android-v1.2.0-rc1) becomes a GitHub pre-release, never "latest",
+    # so the dashboard link (releases/latest/download/smsgate.apk) keeps the last stable APK.
     # Required secrets: GOOGLE_SERVICES_JSON_BASE64, ANDROID_KEYSTORE_BASE64,
     # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+    # versionCode is VERSION_CODE (this workflow's run number, so a later tag always gets a
+    # higher one); versionName is the tag without "android-v".
     needs: build
     if: startsWith(github.ref, 'refs/tags/android-v')
     runs-on: ubuntu-latest
@@ -97,19 +101,37 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: validate the tag
+        id: tag
+        run: |
+          semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          pre='(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+          build='(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+          if ! [[ "$GITHUB_REF_NAME" =~ ^android-v${semver}${pre}${build}$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not android-v<semver> (for example android-v1.0.0 or android-v1.1.0-rc1); no release was made. Delete it and push a valid tag."
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#android-v}"
+          core="${version%%+*}"
+          if [[ "$core" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "versionName $version, versionCode $VERSION_CODE, prerelease $prerelease"
+
       - uses: actions/checkout@v4
+        with:
+          # The build runs third-party Gradle plugins: keep the write token out of .git/config.
+          persist-credentials: false
 
       - name: write google-services.json and the keystore
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          for s in GOOGLE_SERVICES_JSON_BASE64 ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+          for s in GOOGLE_SERVICES_JSON_BASE64 ANDROID_KEYSTORE_BASE64; do
             if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
           done
+          umask 077
           printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
@@ -129,30 +151,51 @@ jobs:
       - name: assemble signed release
         working-directory: android
         env:
+          VERSION_NAME: ${{ steps.tag.outputs.version }}
           ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          export VERSION_NAME="${GITHUB_REF_NAME#android-v}"
-          # No configuration cache: keeps the signing secrets out of cached build state.
-          ./gradlew --no-configuration-cache assembleRelease
+          for s in ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
+          done
+          # No configuration cache and no daemon: keeps the signing secrets out of cached
+          # build state and out of a Gradle process outliving this step.
+          ./gradlew --no-configuration-cache --no-daemon assembleRelease
           apk=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
+          # Fails on an unsigned APK; prints the (public) signing certificate digests.
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
           cp "$apk" "$GITHUB_WORKSPACE/smsgate.apk"
           cp app/build/outputs/mapping/release/mapping.txt "$GITHUB_WORKSPACE/mapping-$GITHUB_REF_NAME.txt"
-          rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: remove the keystore and google-services.json
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks" android/app/google-services.json
 
       - name: publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        # The R8 mapping file is attached so crash stack traces can be de-obfuscated.
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+        # Non-draft, asset named exactly smsgate.apk: releases/latest/download/smsgate.apk
+        # then serves the newest stable release. A new non-pre-release becomes "latest"
+        # (GitHub's default). The R8 mapping file is attached so crash stack traces can be
+        # de-obfuscated.
         run: |
           assets=(smsgate.apk "mapping-$GITHUB_REF_NAME.txt")
+          latest=()
+          if [ "$PRERELEASE" = "true" ]; then latest=(--latest=false); fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Re-run, or a release drafted by hand: replace the assets and publish it.
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease="$PRERELEASE" "${latest[@]}"
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-              --title "SMSGate Android ${GITHUB_REF_NAME#android-v}" \
-              --generate-notes
+              --verify-tag \
+              --title "SMSGate Android $VERSION" \
+              --generate-notes \
+              --prerelease="$PRERELEASE" \
+              "${latest[@]}"
           fi
