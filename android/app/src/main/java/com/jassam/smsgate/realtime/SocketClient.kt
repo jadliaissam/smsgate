@@ -75,7 +75,9 @@ interface RealtimeClient {
  * - Keepalive: an app-level `{"type":"ping"}` at least every [PING_INTERVAL_MS] (5 min,
  *   the README's contract, inside the server's 6-minute idle timeout), on a wake-up
  *   timer armed [KEEPALIVE_DELAY_MS] ahead: inexact alarms may run up to 75 % late, so
- *   pings go out every 2 min 51 s to 5 min. No OkHttp protocol pings: they don't satisfy
+ *   pings go out every 2 min 51 s to 5 min. In deep Doze, without the battery-optimisation
+ *   exemption (D12), the OS allows such an alarm only once per 9 min: the server may then
+ *   close the socket with 4000 and FCM delivers instead. No OkHttp protocol pings: they don't satisfy
  *   the server's idle timer, and a second, unaligned ping schedule would wake the radio
  *   twice. A ping unanswered after [PONG_TIMEOUT_MS] (or by the next ping) marks the
  *   socket dead → reconnect.

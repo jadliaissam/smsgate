@@ -156,11 +156,11 @@ class Connectivity(
     /**
      * The service was destroyed. [reevaluate] (it stopped for the policy or a stop
      * request): apply the policy again, since an [evaluate] that ran while it was still
-     * shutting down skipped the start (a quick off/on toggle).
+     * shutting down skipped the start (a quick off/on toggle). Running state and OFF are
+     * set synchronously in onDestroy (onRunning(false)), not here: this runs later and
+     * must not overwrite the state of a newer service instance.
      */
     suspend fun onServiceDestroyed(reevaluate: Boolean) {
-        serviceRunning = false
-        report(ConnectionState.OFF)
         if (reevaluate) evaluate()
     }
 

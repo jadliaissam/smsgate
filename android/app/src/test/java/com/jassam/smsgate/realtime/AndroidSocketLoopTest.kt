@@ -4,8 +4,10 @@ import android.app.AlarmManager
 import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
+import android.os.BatteryManager
 import android.os.Looper
 import android.os.SystemClock
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -26,25 +28,26 @@ import org.robolectric.shadows.ShadowAlarmManager
 class AndroidSocketLoopTest {
     private val app: Application = RuntimeEnvironment.getApplication()
     private val alarms = shadowOf(app.getSystemService(AlarmManager::class.java))
-    private var plugged = false
-    private val loop = AndroidSocketLoop(app) { plugged }
-    private val loopLooper: Looper get() = alarms.scheduledAlarms.firstNotNullOfOrNull { it.handler?.looper } ?: error("no listener alarm")
+    private val loop = AndroidSocketLoop(app)
 
     @After
     fun tearDown() = loop.close()
 
     private fun single(): ShadowAlarmManager.ScheduledAlarm = alarms.scheduledAlarms.single()
 
-    /** Delivers a PendingIntent alarm like AlarmManager would, then runs the socket thread. */
-    private fun fire(alarm: ShadowAlarmManager.ScheduledAlarm, ran: AtomicInteger, expected: Int) {
+    /** Delivers a PendingIntent alarm like AlarmManager would (the receiver runs on the main looper). */
+    private fun fire(alarm: ShadowAlarmManager.ScheduledAlarm) {
         alarm.operation!!.send()
         shadowOf(Looper.getMainLooper()).idle()
-        val deadline = System.nanoTime() + 5_000_000_000
-        while (ran.get() < expected && System.nanoTime() < deadline) Thread.yield()
     }
 
     @Test
-    fun onBatteryWakeupTimersAreAllowWhileIdleAlarmsToTheReceiver() {
+    fun wakeupTimersAreAllowWhileIdleAlarmsToTheReceiverWhateverThePowerState() {
+        // Chosen when armed and kept: always allow-while-idle, so a timer armed while
+        // plugged in still fires if the phone is unplugged and dozes before it is due.
+        @Suppress("DEPRECATION")
+        app.sendStickyBroadcast(Intent(Intent.ACTION_BATTERY_CHANGED).putExtra(BatteryManager.EXTRA_PLUGGED, BatteryManager.BATTERY_PLUGGED_AC))
+        assertTrue(PowerState.isPluggedIn(app))
         loop.schedule(171_000, wakeup = true) {}
         val alarm = single()
         assertEquals(AlarmManager.ELAPSED_REALTIME_WAKEUP, alarm.type)
@@ -58,30 +61,26 @@ class AndroidSocketLoopTest {
     }
 
     @Test
-    fun pluggedInWakeupTimersAndAllOtherTimersAreListenerAlarms() {
+    fun nonWakeupTimersAreListenerAlarms() {
         loop.schedule(30_000, wakeup = false) {}
-        plugged = true
-        loop.schedule(171_000, wakeup = true) {}
-        val scheduled = alarms.scheduledAlarms.sortedBy { it.triggerAtMs }
-        assertEquals(listOf(AlarmManager.ELAPSED_REALTIME, AlarmManager.ELAPSED_REALTIME_WAKEUP), scheduled.map { it.type })
-        assertTrue(scheduled.all { it.onAlarmListener != null && it.operation == null && !it.isAllowWhileIdle })
+        val alarm = single()
+        assertEquals(AlarmManager.ELAPSED_REALTIME, alarm.type)
+        assertTrue(alarm.onAlarmListener != null && alarm.operation == null && !alarm.isAllowWhileIdle)
     }
 
     @Test
     fun anIdleSafeAlarmRunsItsTaskOnTheLoopThread() {
-        val ran = AtomicInteger()
+        val ran = CountDownLatch(1)
         var thread: String? = null
         loop.schedule(1_000, wakeup = true) {
             thread = Thread.currentThread().name
-            ran.incrementAndGet()
+            ran.countDown()
         }
-        val alarm = single()
-        fire(alarm, ran, 1)
-        // The receiver posted to the socket thread; run it.
-        loop.schedule(60_000, wakeup = false) {} // a listener alarm exposes the loop's looper
-        shadowOf(loopLooper).idle()
-        assertEquals(1, ran.get())
+        fire(single())
+        shadowOf(loop.looper).idle() // run what the receiver posted to the socket thread
+        assertEquals(0, ran.count)
         assertEquals("smsgate-socket", thread)
+        assertFalse("a delivered timer is gone from the registry", SocketAlarms.dispatch(shadowOf(single().operation!!).savedIntent.data) {})
     }
 
     @Test
@@ -113,7 +112,6 @@ class AndroidSocketLoopTest {
     @Test
     fun closeCancelsEveryAlarmAndDropsLaterWork() {
         loop.schedule(1_000, wakeup = true) {}
-        plugged = true
         loop.schedule(2_000, wakeup = true) {}
         loop.schedule(3_000, wakeup = false) {}
         assertEquals(3, alarms.scheduledAlarms.size)

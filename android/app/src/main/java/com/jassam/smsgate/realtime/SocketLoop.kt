@@ -8,7 +8,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
 import androidx.core.net.toUri
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -37,10 +39,16 @@ interface SocketLoop {
      *
      * Timing (inexact alarms, no exact-alarm permission): a delay of 10 s or more may
      * run up to 75 % late (the OS batches wake-ups); shorter delays are not stretched,
-     * but on API 31+ nothing fires sooner than about 5 s after it was set. In Doze,
-     * wake-up timers are subject to the allow-while-idle quota (API 31+: 72 an hour;
-     * older releases: one per 9 min unless the app is battery-optimisation exempt, D12,
-     * then one per 5 s).
+     * but on API 31+ nothing fires sooner than about 5 s after it was set.
+     *
+     * In deep Doze an inexact allow-while-idle alarm fires at most once per 9 minutes per
+     * app (API 31+ targets get the "compat" limit, FLAG_ALLOW_WHILE_IDLE_COMPAT; the
+     * 72-an-hour quota is for exact alarms only; before API 31 the same 9 minutes while
+     * dozing). Only an app the user exempted from battery optimisation (D12) is not
+     * restricted. Without the exemption, keepalive pings in deep Doze can't meet the
+     * server's 6-minute idle timeout: the socket may be closed with 4000, and messages
+     * then arrive through FCM (the server falls back to it once the socket is gone).
+     * Outside Doze (screen on, plugged in, light idle) only the window above applies.
      */
     fun schedule(delayMs: Long, wakeup: Boolean, task: () -> Unit): Cancellable
 
@@ -55,26 +63,31 @@ interface SocketLoop {
  * (screen off, even while charging), the keepalive ping would not go out and the server
  * would drop the socket after `WS_PING_TIMEOUT`.
  *
- * - Wake-up timers on battery: `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)` with an
- *   explicit, immutable PendingIntent to [SocketAlarmReceiver] (not exported), so they
- *   also fire in Doze. The same heuristic window as `set()` applies (verified against the
- *   platform: the client passes WINDOW_HEURISTIC and the service stretches any negative
- *   window with maxTriggerTime), so [SocketClient.KEEPALIVE_DELAY_MS]'s margin holds.
- * - Wake-up timers while plugged in (no Doze), and all other timers: listener alarms
- *   (`ELAPSED_REALTIME_WAKEUP` / `ELAPSED_REALTIME`), no PendingIntent, no allow-while-idle
- *   quota, so short reconnect delays are not held back.
+ * - Wake-up timers (keepalive pings, reconnects): always
+ *   `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)` with an explicit, immutable
+ *   PendingIntent to [SocketAlarmReceiver] (not exported), whatever the power state when
+ *   armed, so a timer armed while plugged in still fires if the phone is unplugged and
+ *   dozes before it is due (see [SocketLoop.schedule] for the Doze limit). The same
+ *   heuristic window as `set()` applies (verified against the platform: the client passes
+ *   WINDOW_HEURISTIC and the service stretches any negative window with maxTriggerTime),
+ *   so [SocketClient.KEEPALIVE_DELAY_MS]'s margin holds. Outside Doze the only extra
+ *   cost is a minimum spacing of a few seconds between such alarms, which merely
+ *   lengthens the shortest reconnect delays.
+ * - Other timers (the pong deadline): listener alarms (`ELAPSED_REALTIME`), no
+ *   PendingIntent; they run the next time the phone is awake.
  *
  * The alarm's wake lock covers the task (the receiver finishes its broadcast only after
  * the task ran); none is held between frames.
  */
-class AndroidSocketLoop(
-    context: Context,
-    private val pluggedIn: () -> Boolean = { PowerState.isPluggedIn(context) },
-) : SocketLoop {
+class AndroidSocketLoop(context: Context) : SocketLoop {
     private val app = context.applicationContext
     private val alarms = app.getSystemService(AlarmManager::class.java)
     private val thread = HandlerThread("smsgate-socket").apply { start() }
     private val handler = Handler(thread.looper)
+
+    /** The socket thread's looper (tests drive it). */
+    @VisibleForTesting
+    internal val looper: Looper get() = thread.looper
     private val pending = mutableSetOf<Cancellable>() // guarded by itself
     @Volatile private var closed = false
 
@@ -87,7 +100,7 @@ class AndroidSocketLoop(
     override fun schedule(delayMs: Long, wakeup: Boolean, task: () -> Unit): Cancellable {
         if (closed) return Cancellable {}
         val at = now() + delayMs.coerceAtLeast(0)
-        val timer = if (wakeup && !pluggedIn()) idleSafe(at, task) else listener(at, wakeup, task)
+        val timer = if (wakeup) idleSafe(at, task) else listener(at, task)
         synchronized(pending) { pending += timer }
         return Cancellable {
             synchronized(pending) { pending -= timer }
@@ -95,14 +108,14 @@ class AndroidSocketLoop(
         }
     }
 
-    private fun listener(at: Long, wakeup: Boolean, task: () -> Unit): Cancellable {
+    private fun listener(at: Long, task: () -> Unit): Cancellable {
         lateinit var self: Cancellable
         val listener = AlarmManager.OnAlarmListener {
             synchronized(pending) { pending -= self }
             task()
         }
         self = Cancellable { alarms.cancel(listener) }
-        alarms.set(if (wakeup) AlarmManager.ELAPSED_REALTIME_WAKEUP else AlarmManager.ELAPSED_REALTIME, at, TAG, listener, handler)
+        alarms.set(AlarmManager.ELAPSED_REALTIME, at, TAG, listener, handler)
         return self
     }
 

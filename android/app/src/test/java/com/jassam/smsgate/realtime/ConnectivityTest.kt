@@ -151,19 +151,30 @@ class ConnectivityTest {
         connectivity.serviceRunning = true // the service is still shutting down after "off"
         assertTrue(connectivity.setAlwaysConnected(true))
         assertEquals(0, service.starts) // skipped: it looked like it was running
+        connectivity.serviceRunning = false // onRunning(false), synchronously in onDestroy
         connectivity.onServiceDestroyed(reevaluate = true)
         assertEquals(1, service.starts)
-        assertFalse(connectivity.serviceRunning)
-        assertEquals(ConnectionState.OFF, connectivity.state.value)
+    }
+
+    @Test
+    fun aLateDestroyOfAnOldInstanceLeavesTheNewInstancesStateAlone() = runBlocking {
+        charging = true
+        // The old instance's onDestroy ran (running=false), a new instance started and
+        // reports, then the old instance's queued re-evaluation arrives.
+        connectivity.serviceRunning = true
+        connectivity.report(ConnectionState.CONNECTED)
+        connectivity.onServiceDestroyed(reevaluate = true)
+        assertTrue(connectivity.serviceRunning)
+        assertEquals(ConnectionState.CONNECTED, connectivity.state.value)
+        assertEquals(0, service.starts)
     }
 
     @Test
     fun aServiceThatStoppedForAReasonARestartWouldRepeatIsNotRestarted() = runBlocking {
         charging = true
-        connectivity.serviceRunning = true
+        connectivity.serviceRunning = false
         connectivity.onServiceDestroyed(reevaluate = false)
         assertEquals(0, service.starts)
-        assertFalse(connectivity.serviceRunning)
     }
 
     @Test
