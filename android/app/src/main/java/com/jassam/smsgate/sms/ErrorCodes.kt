@@ -19,7 +19,7 @@ object ErrorCodes {
     /** The validity window passed before sending (SmsSender, before markSending). */
     const val EXPIRED_ON_DEVICE = "expired_on_device"
 
-    /** For A6 (D7): the app died after handing the SMS to Android, before its result. */
+    /** D7 (work/CrashRecovery.kt): the app died after handing the SMS to Android, before its result. */
     const val OUTCOME_UNKNOWN = "outcome_unknown"
 
     const val MAX_MESSAGE = 256

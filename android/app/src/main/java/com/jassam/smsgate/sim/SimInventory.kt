@@ -26,13 +26,20 @@ import com.jassam.smsgate.api.Sim
 class SimInventory(context: Context) {
     private val app = context.applicationContext
 
-    fun activeSims(): List<Sim> {
-        if (!granted(Manifest.permission.READ_PHONE_STATE)) return emptyList()
+    fun activeSims(): List<Sim> = activeSimsOrNull().orEmpty()
+
+    /**
+     * Like [activeSims], but null when the list is unknown (no READ_PHONE_STATE, or the
+     * platform refused): the heartbeat then leaves the server's list unchanged instead
+     * of erasing it. An empty list means the phone really has no active SIM.
+     */
+    fun activeSimsOrNull(): List<Sim>? {
+        if (!granted(Manifest.permission.READ_PHONE_STATE)) return null
         val manager = app.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
         val infos = try {
             activeSubscriptions(manager)
         } catch (_: SecurityException) {
-            return emptyList()
+            return null
         } ?: return emptyList()
         val sims = infos.map { info ->
             Sim(

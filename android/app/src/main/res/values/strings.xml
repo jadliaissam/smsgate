@@ -104,6 +104,10 @@
     <string name="pairing_error_scanner">The QR scanner isn’t available right now. Enter the pairing code instead.</string>
     <string name="pairing_error_unknown">Something went wrong. Please try again.</string>
 
+    <!-- Background sending (WorkManager foreground notification on Android 11 and older) -->
+    <string name="notification_channel_sending">Sending messages</string>
+    <string name="notification_sending_title">Sending message</string>
+
     <!-- Placeholder home (Task A8 builds the real one) -->
     <string name="home_paired_title">This phone is paired</string>
     <string name="home_paired_body">Connected to %1$s. Messages queued for this device will be sent from here.</string>

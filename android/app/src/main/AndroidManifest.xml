@@ -47,6 +47,16 @@
             android:name=".sms.SmsResultReceiver"
             android:exported="false" />
 
+        <!-- FCM wake-ups ({type:"new", message_id} only) and token refreshes. Not exported:
+             Firebase's own exported receiver hands the intent over inside the app. -->
+        <service
+            android:name=".push.SmsGateMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- App Startup (D10): WorkManager is initialised on demand through App's
              Configuration.Provider; EmojiCompat (downloadable emoji font) is not needed.
              Kept: ProfileInstaller, ProcessLifecycle and OkHttp's context initializer (cheap). -->

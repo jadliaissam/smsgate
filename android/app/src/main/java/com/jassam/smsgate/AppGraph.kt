@@ -9,6 +9,7 @@ import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.work.WorkManager
 import com.jassam.smsgate.api.DeviceApi
 import com.jassam.smsgate.api.DeviceHttp
 import com.jassam.smsgate.api.ServerClock
@@ -17,6 +18,7 @@ import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.KeystoreTokenCipher
 import com.jassam.smsgate.journal.JournalDao
 import com.jassam.smsgate.journal.JournalDb
+import com.jassam.smsgate.push.PushHandler
 import com.jassam.smsgate.sim.SimInventory
 import com.jassam.smsgate.sms.PlatformSmsTransport
 import com.jassam.smsgate.sms.SmsIntents
@@ -29,6 +31,12 @@ import com.jassam.smsgate.ui.onboarding.OnboardingPrefs
 import com.jassam.smsgate.ui.pairing.Pairer
 import com.jassam.smsgate.ui.pairing.PlayServices
 import com.jassam.smsgate.ui.pairing.PostPairingHook
+import com.jassam.smsgate.work.DeviceHeartbeatSource
+import com.jassam.smsgate.work.Revocation
+import com.jassam.smsgate.work.Scheduler
+import com.jassam.smsgate.work.WorkDeps
+import com.jassam.smsgate.work.onPaired
+import kotlin.coroutines.cancellation.CancellationException
 import okhttp3.OkHttpClient
 
 /**
@@ -85,12 +93,17 @@ class AppGraph(context: Context) {
 
     val journalDao: JournalDao by lazy { journalDb.journalDao() }
 
+    /** Background jobs on WorkManager (initialised on first use through App's Configuration.Provider). */
+    val scheduler: Scheduler by lazy { Scheduler { WorkManager.getInstance(app) } }
+
     /**
-     * Status reports decided by the journal (sent / delivered / failed).
-     * TODO(A6): replace with the WorkManager-backed queue (unique ReportStatusWorker per
-     * (id, status), exponential backoff, network constraint).
+     * Status reports decided by the journal (sent / delivered / failed): a unique
+     * ReportStatusWorker per (id, status), retried with backoff on a network.
      */
-    val statusReportQueue: StatusReportQueue = StatusReportQueue { _, _, _, _ -> }
+    val statusReportQueue: StatusReportQueue get() = scheduler
+
+    /** The single 401 path: wipe credentials (if still the token used) and cancel all work. */
+    val revocation: Revocation by lazy { Revocation(credentialStore, scheduler::cancelAll, ::warn) }
 
     /** Hands claimed messages to SmsManager (at most once per journal row). */
     val smsSender: SmsSender by lazy {
@@ -115,6 +128,25 @@ class AppGraph(context: Context) {
         SmsResultHandler(journalDao, statusReportQueue, System::currentTimeMillis)
     }
 
+    /** Dependencies of the workers (see work/WorkDeps.kt, App's WorkerFactory). */
+    val workDeps: WorkDeps by lazy {
+        WorkDeps(
+            credentials = credentialStore,
+            api = { c -> deviceApi(c.serverUrl) { c.deviceToken } },
+            journal = journalDao,
+            sender = smsSender,
+            queue = scheduler,
+            revocation = revocation,
+            heartbeat = DeviceHeartbeatSource(app, simInventory, BuildConfig.VERSION_NAME),
+            fcmToken = PlayServices::fcmToken,
+            now = System::currentTimeMillis,
+            log = ::warn,
+        )
+    }
+
+    /** FCM push and token handling (SmsGateMessagingService). */
+    val pushHandler: PushHandler by lazy { PushHandler(scheduler) { credentialStore.load() != null } }
+
     /** Onboarding flags (checklist done, permissions asked, OEM step done). */
     val onboardingPrefs: OnboardingPrefs by lazy { OnboardingPrefs(app) }
 
@@ -122,11 +154,32 @@ class AppGraph(context: Context) {
     val oem: Oem? by lazy { OemGuidance.detect(Build.MANUFACTURER, Build.BRAND) }
 
     /**
-     * Runs once credentials are stored after pairing.
-     * TODO(A6): schedule the periodic SyncWorker (heartbeat + pending catch-up) and
-     * enqueue an immediate sync through work/Scheduler.kt once it exists.
+     * Runs once credentials are stored after pairing (bounded by Pairer): periodic +
+     * immediate sync and the current FCM token, serialized with revocation.
      */
-    val postPairingHook: PostPairingHook = PostPairingHook { }
+    val postPairingHook: PostPairingHook = PostPairingHook { revocation.exclusive { scheduler.onPaired() } }
+
+    /**
+     * App start (MainActivity): when paired, make sure the periodic sync exists (KEEP)
+     * and run one sync now. Never throws.
+     */
+    suspend fun onAppStart() {
+        try {
+            if (credentialStore.load() == null) return
+            revocation.exclusive {
+                scheduler.schedulePeriodicSync()
+                scheduler.syncNow()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            warn("app start scheduling failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun warn(message: String) {
+        Log.w("SmsGate", message)
+    }
 
     /** Registers this phone and stores its credentials (pairing screen). */
     fun pairer(): Pairer = Pairer(
@@ -137,7 +190,7 @@ class AppGraph(context: Context) {
         fcmToken = PlayServices::fcmToken,
         appVersion = BuildConfig.VERSION_NAME,
         postPairing = postPairingHook,
-        warn = { Log.w("SmsGate", it) },
+        warn = ::warn,
     )
 }
 

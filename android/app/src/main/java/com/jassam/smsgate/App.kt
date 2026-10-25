@@ -3,6 +3,7 @@ package com.jassam.smsgate
 import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
+import com.jassam.smsgate.work.SmsGateWorkerFactory
 
 /**
  * Application entry point. WorkManager is initialised on demand from this
@@ -16,5 +17,6 @@ class App : Application(), Configuration.Provider {
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setMinimumLoggingLevel(if (BuildConfig.DEBUG) Log.INFO else Log.ERROR)
+            .setWorkerFactory(SmsGateWorkerFactory { graph.workDeps })
             .build()
 }
