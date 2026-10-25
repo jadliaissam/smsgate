@@ -10,6 +10,7 @@ import android.net.ConnectivityManager
 import android.os.Looper
 import com.jassam.smsgate.auth.Credentials
 import com.jassam.smsgate.auth.PairingState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -42,6 +43,8 @@ class ConnectivityServiceTest {
     private val states = mutableListOf<ConnectionState>()
     private val running = mutableListOf<Boolean>()
     private var unpluggedStops = 0
+    private val destroyed = mutableListOf<Boolean>()
+    private var credentialsGate: CompletableDeferred<Unit>? = null
     private lateinit var controller: ServiceController<ConnectivityService>
 
     class FakeClient(val credentials: Credentials, val report: (ConnectionState) -> Unit) : RealtimeClient {
@@ -64,19 +67,22 @@ class ConnectivityServiceTest {
         ConnectivityService.depsOverride = ConnectivityService.Deps(
             pairing = pairing,
             alwaysConnected = always,
-            credentials = { credentials },
+            credentials = { credentialsGate?.await(); credentials },
             isCharging = { charging },
             newClient = { c, report -> FakeClient(c, report).also { clients += it } },
             onState = { states += it },
             onRunning = { running += it },
+            onDestroyed = { destroyed += it },
             onUnpluggedStop = { unpluggedStops++ },
         )
+        ConnectivityService.clearStopRequest()
         controller = Robolectric.buildService(ConnectivityService::class.java)
     }
 
     @After
     fun tearDown() {
         ConnectivityService.depsOverride = null
+        ConnectivityService.clearStopRequest()
     }
 
     private val service: ConnectivityService get() = controller.get()
@@ -94,8 +100,10 @@ class ConnectivityServiceTest {
         idle()
     }
 
+    private fun stoppedBySelf(s: ConnectivityService) = shadowOf(s).isStoppedBySelf || shadowOf(s).stopSelfId != 0
+
     private fun assertStopped(s: ConnectivityService) {
-        assertTrue("service stopped itself", shadowOf(s).isStoppedBySelf)
+        assertTrue("service stopped itself", stoppedBySelf(s))
         assertTrue(clients.all { it.stops == it.starts })
     }
 
@@ -109,7 +117,7 @@ class ConnectivityServiceTest {
         assertTrue(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertEquals(first, clients.single().credentials)
         assertEquals(1, clients.single().starts)
-        assertFalse(shadowOf(s).isStoppedBySelf)
+        assertFalse(stoppedBySelf(s))
         assertEquals(listOf(true), running)
     }
 
@@ -141,7 +149,7 @@ class ConnectivityServiceTest {
         broadcast(Intent.ACTION_POWER_DISCONNECTED)
         assertEquals(1, clients.size)
         assertEquals(0, clients.single().stops)
-        assertFalse(shadowOf(s).isStoppedBySelf)
+        assertFalse(stoppedBySelf(s))
 
         always.value = false // the settings toggle
         idle()
@@ -156,7 +164,7 @@ class ConnectivityServiceTest {
         idle()
         assertEquals(1, clients.size)
         assertEquals(0, clients.single().stops)
-        assertFalse(shadowOf(s).isStoppedBySelf)
+        assertFalse(stoppedBySelf(s))
     }
 
     @Test
@@ -229,7 +237,7 @@ class ConnectivityServiceTest {
         idle()
         assertEquals(Service.START_NOT_STICKY, result)
         assertTrue(clients.isEmpty())
-        assertTrue(shadowOf(service).isStoppedBySelf)
+        assertTrue(stoppedBySelf(service))
     }
 
     @Test
@@ -249,5 +257,97 @@ class ConnectivityServiceTest {
         val cm = app.getSystemService(ConnectivityManager::class.java)
         assertTrue(shadowOf(cm).networkCallbacks.isEmpty())
         assertTrue(shadowOf(app).registeredReceivers.none { it.broadcastReceiver.javaClass.name.startsWith(ConnectivityService::class.java.name) })
+    }
+
+    @Test
+    fun aPolicyStopAsksForAReevaluationOnceDestroyed() {
+        start()
+        broadcast(Intent.ACTION_POWER_DISCONNECTED)
+        controller.destroy()
+        assertEquals(listOf(true), destroyed)
+    }
+
+    @Test
+    fun aRefusedForegroundStartDoesNotAskForAReevaluation() {
+        controller.create()
+        shadowOf(service).setThrowInStartForeground(ForegroundServiceStartNotAllowedException("background"))
+        service.onStartCommand(Intent(app, ConnectivityService::class.java), 0, 1)
+        controller.destroy()
+        assertEquals(listOf(false), destroyed)
+    }
+
+    @Test
+    fun whenItsClientStopsItselfTheServiceStopsWithoutReevaluating() {
+        val s = start()
+        clients.single().report(ConnectionState.OFF) // revoked, or an unusable server URL
+        idle()
+        assertStopped(s)
+        assertEquals(ConnectionState.OFF, states.last())
+        controller.destroy()
+        assertEquals(listOf(false), destroyed)
+    }
+
+    @Test
+    fun aStopRequestWhileRunningStopsAndReevaluates() {
+        val s = start()
+        ConnectivityService.requestStop()
+        idle()
+        assertStopped(s)
+        controller.destroy()
+        assertEquals(listOf(true), destroyed)
+    }
+
+    @Test
+    fun aStopRequestedBeforeTheServiceRanStopsItRightAfterStartForeground() {
+        // startForegroundService, then a stop before onStartCommand: stopService here would
+        // crash the app ("did not then call startForeground"); the request waits instead.
+        ConnectivityService.requestStop()
+        controller.create()
+        idle()
+        assertFalse(stoppedBySelf(service))
+        assertEquals(Service.START_NOT_STICKY, service.onStartCommand(Intent(app, ConnectivityService::class.java), 0, 1))
+        idle()
+        assertNotNull(shadowOf(service).lastForegroundNotification)
+        assertTrue(stoppedBySelf(service))
+        assertTrue(clients.isEmpty())
+    }
+
+    @Test
+    fun aStartQueuedAfterAPolicyStopBeginsAFreshWatch() {
+        val s = start()
+        broadcast(Intent.ACTION_POWER_DISCONNECTED)
+        assertStopped(s)
+        broadcast(Intent.ACTION_POWER_CONNECTED) // plugged in again before the service was destroyed
+        controller.startCommand(0, 2)
+        idle()
+        assertEquals(2, clients.size)
+        assertEquals(1, clients.last().starts)
+        assertEquals(0, clients.last().stops)
+    }
+
+    @Test
+    fun destroyedWhileStillLoadingCredentialsCreatesNoClient() {
+        credentialsGate = CompletableDeferred()
+        start()
+        controller.destroy()
+        credentialsGate!!.complete(Unit)
+        idle()
+        assertTrue(clients.isEmpty())
+        assertEquals(listOf(true, false), running)
+    }
+
+    @Test
+    fun aStartQueuedAfterAStopRequestConnectsAgain() {
+        val s = start()
+        ConnectivityService.requestStop()
+        idle()
+        assertStopped(s)
+        // A new start (AndroidServiceControl.start clears the request) lands before onDestroy.
+        ConnectivityService.clearStopRequest()
+        controller.startCommand(0, 2)
+        idle()
+        assertEquals(2, clients.size)
+        assertEquals(1, clients.last().starts)
+        assertEquals(0, clients.last().stops)
     }
 }

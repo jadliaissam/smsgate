@@ -2,10 +2,12 @@ package com.jassam.smsgate.realtime
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * [SocketLoop] on a real single thread (OkHttp callbacks arrive from other threads, as
  * in production) with a virtual clock: timers run only when the test calls [advance].
+ * Like [AndroidSocketLoop], it drops posts and timers after [close].
  */
 internal class FakeLoop(start: Long = 1_000_000L) : SocketLoop {
     class Timer(val at: Long, val delayMs: Long, val wakeup: Boolean, val task: () -> Unit)
@@ -14,20 +16,35 @@ internal class FakeLoop(start: Long = 1_000_000L) : SocketLoop {
     private val lock = Any()
     private var time = start
     private val timers = mutableListOf<Timer>()
+    private var isClosed = false
+
+    /** Times [close] was called. */
     @Volatile var closed = 0
+
+    /** Every post attempt (callbacks of OkHttp included), dropped or not. */
+    val posts = AtomicInteger()
 
     override fun now(): Long = synchronized(lock) { time }
 
     override fun post(task: () -> Unit) {
+        posts.incrementAndGet()
+        if (synchronized(lock) { isClosed }) return
         executor.execute(task)
     }
 
     override fun schedule(delayMs: Long, wakeup: Boolean, task: () -> Unit): Cancellable {
-        val timer = synchronized(lock) { Timer(time + delayMs, delayMs, wakeup, task).also { timers += it } }
+        val timer = synchronized(lock) {
+            if (isClosed) return Cancellable {}
+            Timer(time + delayMs, delayMs, wakeup, task).also { timers += it }
+        }
         return Cancellable { synchronized(lock) { timers.remove(timer) } }
     }
 
     override fun close() {
+        synchronized(lock) {
+            isClosed = true
+            timers.clear()
+        }
         closed++
     }
 

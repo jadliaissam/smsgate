@@ -6,7 +6,10 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import androidx.core.content.ContextCompat
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,11 +27,28 @@ class AndroidServiceControl(context: Context) : ServiceControl {
     private val app = context.applicationContext
 
     override fun start() {
+        ConnectivityService.clearStopRequest()
         ContextCompat.startForegroundService(app, Intent(app, ConnectivityService::class.java))
     }
 
+    /** A stop request the service honours once in the foreground (see [ConnectivityService.requestStop]). */
     override fun stop() {
-        app.stopService(Intent(app, ConnectivityService::class.java))
+        ConnectivityService.requestStop()
+    }
+}
+
+/**
+ * Runs a socket revocation on [this] scope (fire and forget from the socket thread).
+ * Never lets an exception escape into the scope, so a failing revocation can't crash
+ * the process (and loop under START_STICKY); only the exception class is logged.
+ */
+fun CoroutineScope.launchRevocation(token: String, revoke: suspend (String) -> Unit, log: (String) -> Unit): Job = launch {
+    try {
+        revoke(token)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("socket revocation failed: ${e.javaClass.simpleName}")
     }
 }
 
@@ -131,6 +151,17 @@ class Connectivity(
     /** Socket state, reported by the running client. */
     internal fun report(state: ConnectionState) {
         _state.value = state
+    }
+
+    /**
+     * The service was destroyed. [reevaluate] (it stopped for the policy or a stop
+     * request): apply the policy again, since an [evaluate] that ran while it was still
+     * shutting down skipped the start (a quick off/on toggle).
+     */
+    suspend fun onServiceDestroyed(reevaluate: Boolean) {
+        serviceRunning = false
+        report(ConnectionState.OFF)
+        if (reevaluate) evaluate()
     }
 
     private fun startService() {

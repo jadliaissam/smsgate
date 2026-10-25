@@ -82,7 +82,11 @@ interface RealtimeClient {
  * - Reconnect: [ReconnectBackoff] (1 s doubling to 5 min, jittered); the attempt count
  *   resets once a connection stayed open [HEALTHY_AFTER_MS]. 4001 (replaced) waits the
  *   long, capped delay so two sockets of one device don't keep replacing each other; a
- *   Retry-After is honoured.
+ *   Retry-After is honoured. Server-wide events (close 1001 shutting down / 1013 full, an
+ *   upgrade answered 502/503/504) wait at least a uniformly random
+ *   [BUSY_MIN_DELAY_MS]–[BUSY_MAX_DELAY_MS], so thousands of phones don't reconnect in the
+ *   same second; the attempt count still grows. These server-requested waits are not
+ *   cut short by a network change.
  *
  * Thread-safe: all state is confined to [loop]; OkHttp callbacks post to it and are
  * ignored once their socket is no longer the current one.
@@ -100,9 +104,11 @@ class SocketClient(
     private val onState: (ConnectionState) -> Unit = {},
     /** Diagnostics; never passed tokens, numbers or bodies. */
     private val log: (String) -> Unit = {},
+    /** Tests only: a fake socket factory instead of [httpClient]. */
+    webSockets: WebSocket.Factory? = null,
 ) : RealtimeClient {
     // readTimeout(0): the API client's 30 s read timeout would kill an idle socket.
-    private val client: OkHttpClient = httpClient.newBuilder()
+    private val client: WebSocket.Factory = webSockets ?: httpClient.newBuilder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(0, TimeUnit.MILLISECONDS)
         .build()
@@ -208,6 +214,10 @@ class SocketClient(
                 log("socket: replaced by another connection of this device")
                 scheduleReconnect(backoff.longDelayMs(), hold = true)
             }
+            CLOSE_GOING_AWAY, CLOSE_TRY_AGAIN_LATER -> {
+                log("socket: closed $code")
+                scheduleBusyReconnect()
+            }
             else -> {
                 log("socket: closed $code")
                 scheduleReconnect()
@@ -226,13 +236,19 @@ class SocketClient(
             revoked()
             return
         }
-        log("socket: upgrade HTTP ${error.status} ${error.code}")
+        log("socket: upgrade HTTP ${error.status} ${safeCode(error.code)}")
         val retryAfterMs = error.retryAfterSeconds?.let { (it * 1000).coerceAtMost(MAX_RETRY_AFTER_MS) } ?: 0
-        if (retryAfterMs > 0) {
-            scheduleReconnect(maxOf(nextBackoff(), retryAfterMs), hold = true)
-        } else {
-            scheduleReconnect()
+        when {
+            error.status in BUSY_STATUSES -> scheduleBusyReconnect(retryAfterMs)
+            retryAfterMs > 0 -> scheduleReconnect(maxOf(nextBackoff(), retryAfterMs), hold = true)
+            else -> scheduleReconnect()
         }
+    }
+
+    /** Server-wide trouble: a wide random wait (at least [minDelayMs]), held against nudges. */
+    private fun scheduleBusyReconnect(minDelayMs: Long = 0) {
+        val spread = backoff.uniformMs(BUSY_MIN_DELAY_MS, BUSY_MAX_DELAY_MS)
+        scheduleReconnect(maxOf(spread, nextBackoff(), minDelayMs), hold = true)
     }
 
     private fun nextBackoff(): Long {
@@ -299,10 +315,13 @@ class SocketClient(
 
     private fun shutdown() {
         val s = socket
+        val wasOpen = open
         stopped = true
         cancelRetry()
         dropSocket()
-        s?.close(NORMAL_CLOSURE, null)
+        // A socket still upgrading is cancelled: a graceful close would only be queued
+        // until the upgrade finished, keeping the connection (and the server's slot) alive.
+        if (wasOpen) s?.close(NORMAL_CLOSURE, null) else s?.cancel()
         state(ConnectionState.OFF)
         loop.close() // after the tasks already posted; later callbacks are dropped
     }
@@ -419,7 +438,14 @@ class SocketClient(
         const val CLOSE_IDLE = 4000
         const val CLOSE_REPLACED = 4001
         const val CLOSE_REVOKED = 4003
+        const val CLOSE_GOING_AWAY = 1001
+        const val CLOSE_TRY_AGAIN_LATER = 1013
         const val NORMAL_CLOSURE = 1000
+
+        /** Bounds of the random wait after a server-wide disconnect (deploy, full instance). */
+        const val BUSY_MIN_DELAY_MS = 1_000L
+        const val BUSY_MAX_DELAY_MS = 60_000L
+        private val BUSY_STATUSES = setOf(502, 503, 504)
 
         const val PING_FRAME = """{"type":"ping"}"""
         private const val CODE_UNAUTHORIZED = "unauthorized"

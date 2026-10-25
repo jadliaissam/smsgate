@@ -74,6 +74,12 @@
                 android:value="Keeps a connection to the user's own SMS gateway server open so that messages the user's apps queue are sent from this phone immediately, instead of waiting for a push or the next periodic sync." />
         </service>
 
+        <!-- Doze-safe socket timers (setAndAllowWhileIdle on battery): explicit, immutable
+             PendingIntents of this app only. -->
+        <receiver
+            android:name=".realtime.SocketAlarmReceiver"
+            android:exported="false" />
+
         <!-- App Startup (D10): WorkManager is initialised on demand through App's
              Configuration.Provider; EmojiCompat (downloadable emoji font) is not needed.
              Kept: ProfileInstaller, ProcessLifecycle and OkHttp's context initializer (cheap). -->

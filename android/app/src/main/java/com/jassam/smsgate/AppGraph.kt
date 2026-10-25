@@ -29,6 +29,7 @@ import com.jassam.smsgate.realtime.PowerState
 import com.jassam.smsgate.realtime.ReconnectBackoff
 import com.jassam.smsgate.realtime.ServiceControl
 import com.jassam.smsgate.realtime.SocketClient
+import com.jassam.smsgate.realtime.launchRevocation
 import com.jassam.smsgate.sim.SimInventory
 import com.jassam.smsgate.sms.PlatformSmsTransport
 import com.jassam.smsgate.sms.SmsIntents
@@ -50,6 +51,7 @@ import com.jassam.smsgate.work.WorkDeps
 import com.jassam.smsgate.work.onPaired
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -133,8 +135,17 @@ class AppGraph(context: Context) {
         )
     }
 
-    /** Process-wide scope for short fire-and-forget work started from callbacks (socket revocation). */
-    private val appScope: CoroutineScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    /**
+     * Process-wide scope for short fire-and-forget work started from callbacks (socket
+     * revocation, re-evaluation after the service stopped). Its handler logs anything
+     * uncaught instead of crashing the process.
+     */
+    private val appScope: CoroutineScope by lazy {
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.Default +
+                CoroutineExceptionHandler { _, e -> warn("background task failed: ${e.javaClass.simpleName}") },
+        )
+    }
 
     private val serviceControl: ServiceControl by lazy { AndroidServiceControl(app) }
 
@@ -179,7 +190,7 @@ class AppGraph(context: Context) {
                 queue = scheduler,
                 clock = serverClock,
                 heartbeat = heartbeatSource,
-                onRevoked = { token -> appScope.launch { revocation.onUnauthorized(token) } },
+                onRevoked = { token -> appScope.launchRevocation(token, { revocation.onUnauthorized(it) }, ::warn) },
                 onState = onState,
                 log = ::warn,
             )
@@ -189,6 +200,7 @@ class AppGraph(context: Context) {
             connectivity.serviceRunning = running
             if (!running) connectivity.report(ConnectionState.OFF)
         },
+        onDestroyed = { reevaluate -> appScope.launch { connectivity.onServiceDestroyed(reevaluate) } },
         onUnpluggedStop = scheduler::connectWhenCharging,
         log = ::warn,
     )

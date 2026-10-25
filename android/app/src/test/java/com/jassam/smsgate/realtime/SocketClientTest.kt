@@ -26,6 +26,8 @@ import kotlinx.serialization.json.Json
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -46,7 +48,8 @@ class SocketClientTest {
     val tmp = TemporaryFolder()
 
     private val server = MockWebServer()
-    private val loop = FakeLoop()
+    /** The loop of the client created last (each client closes its own loop when it stops for good). */
+    private var loop = FakeLoop()
     private val queue = RecordingWorkQueue()
     private val clock = ServerClock(monotonicMillis = { loop.now() }, wallMillis = { 0L })
     private val revoked = CopyOnWriteArrayList<String>()
@@ -70,16 +73,21 @@ class SocketClientTest {
         server.close()
     }
 
-    private fun client(creds: Credentials = credentials, random: Random = Random(7)) = SocketClient(
+    private fun client(
+        creds: Credentials = credentials,
+        random: Random = Random(7),
+        sockets: WebSocket.Factory? = null,
+    ) = SocketClient(
         credentials = creds,
         httpClient = http,
-        loop = loop,
+        loop = FakeLoop().also { loop = it },
         backoff = ReconnectBackoff(random),
         queue = queue,
         clock = clock,
         heartbeat = { heartbeat },
         onRevoked = { onRevoked(it) },
         onState = { states += it },
+        webSockets = sockets,
     ).also { clients += it }
 
     /** The server side of one upgraded socket. */
@@ -170,7 +178,7 @@ class SocketClientTest {
 
     @Test
     fun heartbeatSourceFailureStillSendsAnEmptyHeartbeat() {
-        val c = SocketClient(credentials, http, loop, ReconnectBackoff(Random(1)), queue, clock, { error("binder died") }, { revoked += it })
+        val c = SocketClient(credentials, http, FakeLoop().also { loop = it }, ReconnectBackoff(Random(1)), queue, clock, { error("binder died") }, { revoked += it })
         clients += c
         val peer = upgrade()
         c.start()
@@ -334,7 +342,7 @@ class SocketClientTest {
 
     @Test
     fun otherCloseCodesReconnectWithBackoff() {
-        for (code in listOf(SocketClient.CLOSE_IDLE, 1001, 1011, 1013)) {
+        for (code in listOf(SocketClient.CLOSE_IDLE, 1011, 1000)) {
             states.clear()
             val c = client()
             val peer = connect(c)
@@ -351,10 +359,10 @@ class SocketClientTest {
     fun lateCallbacksOfADroppedSocketAreIgnored() {
         val peer = connect()
         states.clear()
-        peer.socket!!.close(1001, "going away")
+        val posts = loop.posts.get()
+        peer.socket!!.close(SocketClient.CLOSE_IDLE, "idle")
         // OkHttp reports both onClosing and onClosed for this socket: only the first counts.
-        assertTrue(peer.closed.await(5, TimeUnit.SECONDS))
-        Thread.sleep(100)
+        await("both close callbacks") { loop.posts.get() >= posts + 2 }
         loop.idle()
         assertEquals(listOf(ConnectionState.WAITING), states.toList())
         assertTrue(loop.timers().single().delayMs in 500..1_000)
@@ -363,7 +371,7 @@ class SocketClientTest {
     @Test
     fun backoffDoublesOnRepeatedFailuresUpToFiveMinutesWithJitter() {
         val c = client(random = Random(99))
-        repeat(12) { refuse(503, """{"error":{"code":"ws_capacity","message":"m"}}""") }
+        repeat(12) { refuse(500, """{"error":{"code":"internal_error","message":"m"}}""") }
         c.start()
         val delays = mutableListOf<Long>()
         repeat(12) { i ->
@@ -382,7 +390,7 @@ class SocketClientTest {
     @Test
     fun backoffResetsOnlyAfterAConnectionStayedHealthy() {
         val c = client()
-        repeat(3) { refuse(503) }
+        repeat(3) { refuse(500) }
         c.start()
         var peer: Peer? = null
         repeat(3) { i -> // attempts 0, 1, 2 fail; the third retry connects
@@ -408,7 +416,7 @@ class SocketClientTest {
 
         // Open for 30 s, then dropped: back to 0.5–1 s.
         loop.advance(SocketClient.HEALTHY_AFTER_MS)
-        second.socket!!.close(1001, "going away")
+        second.socket!!.close(1011, "internal error")
         val t2 = retryTimer()
         assertTrue("after a healthy connection ${t2.delayMs}", t2.delayMs in 500..1_000)
     }
@@ -416,7 +424,7 @@ class SocketClientTest {
     @Test
     fun networkAvailableRetriesAtOnceWithAFreshBackoff() {
         val c = client()
-        repeat(4) { refuse(503) }
+        repeat(4) { refuse(500) }
         c.start()
         repeat(3) {
             val t = retryTimer()
@@ -520,6 +528,194 @@ class SocketClientTest {
             SocketClient.heartbeatFrame(Heartbeat(5, false, 0, emptyList(), "9")),
         )
     }
+
+    // --- fake sockets: callbacks driven by hand ---
+
+    private class FakeSocket(private val request: Request, val listener: WebSocketListener) : WebSocket {
+        val sent = CopyOnWriteArrayList<String>()
+        val closes = CopyOnWriteArrayList<Int>()
+        @Volatile var cancelled = 0
+        override fun request() = request
+        override fun queueSize() = 0L
+        override fun send(text: String): Boolean = sent.add(text)
+        override fun send(bytes: okio.ByteString) = true
+        override fun close(code: Int, reason: String?): Boolean = closes.add(code)
+        override fun cancel() {
+            cancelled++
+        }
+        fun open() = listener.onOpen(this, Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(101).message("Switching Protocols").build())
+        fun frame(text: String) = listener.onMessage(this, text)
+    }
+
+    private class FakeSockets : WebSocket.Factory {
+        val created = CopyOnWriteArrayList<FakeSocket>()
+        override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket = FakeSocket(request, listener).also { created += it }
+    }
+
+    @Test
+    fun stopWhileStillConnectingCancelsInsteadOfClosing() {
+        val sockets = FakeSockets()
+        val c = client(sockets = sockets)
+        c.start()
+        await("connecting") { sockets.created.size == 1 }
+        c.stop()
+        loop.idle()
+        val s = sockets.created.single()
+        assertEquals(1, s.cancelled)
+        assertTrue(s.closes.isEmpty())
+        assertEquals(ConnectionState.OFF, states.last())
+    }
+
+    @Test
+    fun stopWhenOpenClosesGracefully() {
+        val sockets = FakeSockets()
+        val c = client(sockets = sockets)
+        c.start()
+        await("connecting") { sockets.created.size == 1 }
+        val s = sockets.created.single()
+        s.open()
+        await("heartbeat") { s.sent.isNotEmpty() }
+        c.stop()
+        loop.idle()
+        assertEquals(listOf(SocketClient.NORMAL_CLOSURE), s.closes.toList())
+        assertEquals(0, s.cancelled)
+    }
+
+    @Test
+    fun startingTwiceOpensOneSocket() {
+        val sockets = FakeSockets()
+        val c = client(sockets = sockets)
+        c.start()
+        c.start()
+        loop.idle()
+        assertEquals(1, sockets.created.size)
+        assertEquals(listOf(ConnectionState.CONNECTING), states.toList())
+    }
+
+    @Test
+    fun callbacksOfASocketDroppedAsDeadAreIgnoredAfterTheReconnect() {
+        val sockets = FakeSockets()
+        val c = client(sockets = sockets)
+        c.start()
+        await("connecting") { sockets.created.size == 1 }
+        val old = sockets.created.single()
+        old.open()
+        await("heartbeat") { old.sent.size == 1 }
+        loop.advance(SocketClient.KEEPALIVE_DELAY_MS) // ping…
+        loop.advance(SocketClient.PONG_TIMEOUT_MS) // …unanswered: dead
+        assertEquals(1, old.cancelled)
+        val retry = retryTimer()
+        loop.advance(retry.delayMs)
+        val current = sockets.created.last()
+        assertTrue(current !== old)
+        current.open()
+        await("connected again") { current.sent.size == 1 }
+        states.clear()
+
+        // Late callbacks of the dead socket (already read or queued by OkHttp).
+        old.frame("""{"type":"new","message_id":"$ID"}""")
+        old.frame("""{"type":"revoked"}""")
+        old.frame("""{"type":"error","code":"unauthorized","message":"m"}""")
+        old.listener.onClosing(old, SocketClient.CLOSE_REVOKED, "revoked")
+        old.listener.onClosed(old, SocketClient.CLOSE_REVOKED, "revoked")
+        old.listener.onFailure(old, java.io.IOException("canceled"), null)
+        loop.idle()
+
+        assertTrue(revoked.isEmpty())
+        assertTrue(queue.processed.isEmpty())
+        assertTrue(states.isEmpty())
+        assertEquals(listOf(SocketClient.KEEPALIVE_DELAY_MS), loop.timers().map { it.delayMs })
+        current.frame("""{"type":"new","message_id":"$ID"}""")
+        await("current socket frame") { queue.processed.size == 1 }
+    }
+
+    @Test
+    fun serverWideClosesSpreadTheReconnectAndKeepTheAttemptCount() {
+        for (code in listOf(SocketClient.CLOSE_GOING_AWAY, SocketClient.CLOSE_TRY_AGAIN_LATER)) {
+            states.clear()
+            val c = client(random = Random(code))
+            val peer = connect(c)
+            peer.socket!!.close(code, "x")
+            val timer = retryTimer()
+            assertTrue("close $code: ${timer.delayMs}", timer.delayMs in SocketClient.BUSY_MIN_DELAY_MS..SocketClient.BUSY_MAX_DELAY_MS)
+            c.reconnectNow() // a network change doesn't collapse the spread
+            loop.idle()
+            assertEquals(listOf(timer), loop.timers())
+
+            // The attempt count grew: a quick drop after the reconnect backs off 1–2 s, not 0.5–1 s.
+            val next = upgrade()
+            states.clear()
+            loop.advance(timer.delayMs)
+            assertTrue(next.next().contains("heartbeat"))
+            await("connected") { states.lastOrNull() == ConnectionState.CONNECTED }
+            next.socket!!.close(1011, "x")
+            val t2 = retryTimer()
+            assertTrue("after $code then 1011: ${t2.delayMs}", t2.delayMs in 1_000..2_000)
+            c.stop()
+            loop.idle()
+        }
+    }
+
+    @Test
+    fun serverWideSpreadUsesTheWholeRange() {
+        val low = ReconnectBackoff(object : Random() {
+            override fun nextBits(bitCount: Int) = 0
+            override fun nextLong(until: Long) = 0L
+        })
+        val high = ReconnectBackoff(object : Random() {
+            override fun nextBits(bitCount: Int) = 0
+            override fun nextLong(until: Long) = until - 1
+        })
+        assertEquals(SocketClient.BUSY_MIN_DELAY_MS, low.uniformMs(SocketClient.BUSY_MIN_DELAY_MS, SocketClient.BUSY_MAX_DELAY_MS))
+        assertEquals(SocketClient.BUSY_MAX_DELAY_MS, high.uniformMs(SocketClient.BUSY_MIN_DELAY_MS, SocketClient.BUSY_MAX_DELAY_MS))
+    }
+
+    @Test
+    fun upgrade5xxFromABusyOrRestartingServerSpreadsTheReconnect() {
+        for ((status, body) in listOf(
+            503 to """{"error":{"code":"ws_capacity","message":"m"}}""",
+            503 to """{"error":{"code":"shutting_down","message":"m"}}""",
+            502 to "<html>Bad Gateway</html>",
+            504 to "",
+        )) {
+            states.clear()
+            refuse(status, body)
+            val c = client(random = Random(status))
+            c.start()
+            val timer = retryTimer()
+            assertTrue("$status: ${timer.delayMs}", timer.delayMs in SocketClient.BUSY_MIN_DELAY_MS..SocketClient.BUSY_MAX_DELAY_MS)
+            c.reconnectNow()
+            loop.idle()
+            assertEquals(listOf(timer), loop.timers())
+            c.stop()
+            loop.idle()
+        }
+        assertTrue(revoked.isEmpty())
+    }
+
+    @Test
+    fun retryAfterIsHonouredOnABusyUpgradeToo() {
+        refuse(503, """{"error":{"code":"ws_capacity","message":"m"}}""", "Retry-After" to "300")
+        client().start()
+        assertTrue(retryTimer().delayMs >= 300_000)
+    }
+
+    @Test
+    fun aNetworkNudgeDuringARetryAfterHoldIsIgnored() {
+        refuse(429, """{"error":{"code":"rate_limited","message":"m"}}""", "Retry-After" to "30")
+        val c = client()
+        c.start()
+        val timer = retryTimer()
+        repeat(3) { c.reconnectNow() }
+        loop.idle()
+        assertEquals(listOf(timer), loop.timers())
+        assertEquals(1, server.requestCount)
+        // Once the hold is over, the retry goes ahead as scheduled.
+        val peer = upgrade()
+        loop.advance(timer.delayMs)
+        assertTrue(peer.next().contains("heartbeat"))
+    }
+
 
     private companion object {
         const val TOKEN = "dt_1"

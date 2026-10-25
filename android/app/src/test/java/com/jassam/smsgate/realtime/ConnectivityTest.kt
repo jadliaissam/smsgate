@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.BatteryManager
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import java.io.File
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -130,12 +132,51 @@ class ConnectivityTest {
     }
 
     @Test
-    fun androidServiceControlStartsAndStopsTheService() {
+    fun androidServiceControlStartsTheServiceAndStopsItByRequestNotStopService() {
         val control = AndroidServiceControl(app)
-        control.start()
+        control.stop()
+        assertTrue(ConnectivityService.stopRequested)
+        control.start() // a new start clears an old request
+        assertFalse(ConnectivityService.stopRequested)
         assertEquals(ComponentName(app, ConnectivityService::class.java), shadowOf(app).nextStartedService.component)
         control.stop()
-        assertEquals(ComponentName(app, ConnectivityService::class.java), shadowOf(app).nextStoppedService.component)
+        assertTrue(ConnectivityService.stopRequested)
+        assertNull(shadowOf(app).nextStoppedService) // never stopService (crash between startForegroundService and startForeground)
+        ConnectivityService.clearStopRequest()
+    }
+
+    @Test
+    fun aQuickOffOnToggleEndsWithTheServiceRunning() = runBlocking {
+        charging = false
+        connectivity.serviceRunning = true // the service is still shutting down after "off"
+        assertTrue(connectivity.setAlwaysConnected(true))
+        assertEquals(0, service.starts) // skipped: it looked like it was running
+        connectivity.onServiceDestroyed(reevaluate = true)
+        assertEquals(1, service.starts)
+        assertFalse(connectivity.serviceRunning)
+        assertEquals(ConnectionState.OFF, connectivity.state.value)
+    }
+
+    @Test
+    fun aServiceThatStoppedForAReasonARestartWouldRepeatIsNotRestarted() = runBlocking {
+        charging = true
+        connectivity.serviceRunning = true
+        connectivity.onServiceDestroyed(reevaluate = false)
+        assertEquals(0, service.starts)
+        assertFalse(connectivity.serviceRunning)
+    }
+
+    @Test
+    fun aFailingSocketRevocationNeverReachesTheScopeHandler() = runBlocking {
+        val uncaught = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> uncaught += e })
+        val tokens = mutableListOf<String>()
+        scope.launchRevocation("dt_1", { tokens += it; throw IllegalStateException("datastore broke") }, { logs += it }).join()
+        assertEquals(listOf("dt_1"), tokens)
+        assertTrue(uncaught.isEmpty())
+        assertTrue(logs.any { it.contains("IllegalStateException") })
+        assertFalse(logs.any { it.contains("datastore broke") || it.contains("dt_1") })
+        scope.cancel()
     }
 
     @Test

@@ -9,7 +9,9 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.annotation.VisibleForTesting
 import com.jassam.smsgate.appGraph
 import com.jassam.smsgate.auth.Credentials
@@ -38,6 +40,8 @@ import kotlinx.coroutines.launch
  *
  * Every start calls startForeground first (required after startForegroundService); a
  * refused startForeground (background start on API 31+) is logged and the service stops.
+ * Others stop it with [requestStop] (never stopService); it also stops when its client
+ * stops itself (revoked, unusable server URL).
  * START_STICKY: a restart by the system re-checks policy and credentials through the
  * same watch and stops if the socket isn't needed.
  */
@@ -54,13 +58,35 @@ class ConnectivityService : Service() {
         val onState: (ConnectionState) -> Unit = {},
         /** Running state for [Connectivity.serviceRunning]. */
         val onRunning: (Boolean) -> Unit = {},
+        /**
+         * The service was destroyed; [reevaluate]: it stopped for the policy or a stop
+         * request, so the policy may have flipped back meanwhile (Connectivity.evaluate
+         * skipped its start while the service was still running) and is applied again.
+         * False when it stopped for a reason a restart would only repeat (foreground
+         * refused, client stopped itself, no credentials).
+         */
+        val onDestroyed: (reevaluate: Boolean) -> Unit = {},
         /** The policy stopped the service while paired, unplugged and "Always connected" off. */
         val onUnpluggedStop: () -> Unit = {},
         val log: (String) -> Unit = {},
     )
 
+    /** Why the service stopped itself. */
+    private enum class Stop(val reevaluate: Boolean) {
+        POLICY(true),
+        REQUESTED(true),
+        CLIENT_STOPPED(false),
+        NO_CREDENTIALS(false),
+        FOREGROUND_REFUSED(false),
+        ERROR(false),
+    }
+
     private lateinit var deps: Deps
+    private val main = Handler(Looper.getMainLooper())
     private var scope: CoroutineScope? = null
+    private var inForeground = false
+    private var stopReason: Stop? = null
+    private var lastStartId = 0
     private val charging = MutableStateFlow(false)
 
     @Volatile
@@ -74,6 +100,7 @@ class ConnectivityService : Service() {
     override fun onCreate() {
         super.onCreate()
         deps = depsOverride ?: applicationContext.appGraph.connectivityServiceDeps()
+        instance = this
         deps.onRunning(true)
         charging.value = deps.isCharging()
         val receiver = object : BroadcastReceiver() {
@@ -96,15 +123,24 @@ class ConnectivityService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         if (!enterForeground()) {
-            stopSelf()
+            finish(Stop.FOREGROUND_REFUSED)
             return START_NOT_STICKY
         }
+        inForeground = true
+        if (stopRequested) {
+            // Stopped before it got here (stopService at this point would crash the app:
+            // "did not then call startForeground"), so it stops now, in the foreground.
+            finish(Stop.REQUESTED)
+            return START_NOT_STICKY
+        }
+        stopReason = null
         if (scope == null) {
             val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             scope = s
             s.launch { watch() }
-            registerNetworkCallback()
+            if (networkCallback == null) registerNetworkCallback()
         } else {
             client?.reconnectNow()
         }
@@ -121,8 +157,15 @@ class ConnectivityService : Service() {
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) }
         }
         networkCallback = null
+        if (instance === this) instance = null
         deps.onRunning(false)
+        deps.onDestroyed(stopReason?.reevaluate == true)
         super.onDestroy()
+    }
+
+    /** [requestStop] on the main thread: stops now if in the foreground, else at onStartCommand. */
+    private fun onStopRequested() {
+        if (stopRequested && inForeground) finish(Stop.REQUESTED)
     }
 
     private suspend fun watch() {
@@ -134,33 +177,46 @@ class ConnectivityService : Service() {
             throw e
         } catch (e: Exception) {
             deps.log("connectivity watch failed: ${e.javaClass.simpleName}")
-            finish(unpluggedStop = false)
+            finish(Stop.ERROR)
         }
     }
 
     private suspend fun apply(paired: PairingState.Paired?, always: Boolean, plugged: Boolean) {
         if (!ConnectionPolicy.shouldConnect(paired != null, plugged, always)) {
-            finish(unpluggedStop = paired != null && !always && !plugged)
+            if (paired != null && !always && !plugged) deps.onUnpluggedStop()
+            finish(Stop.POLICY)
             return
         }
         val credentials = deps.credentials()
         if (credentials == null) {
-            finish(unpluggedStop = false)
+            finish(Stop.NO_CREDENTIALS)
             return
         }
         if (client != null && credentials == clientFor) return
         stopClient()
         lateinit var created: RealtimeClient
-        created = deps.newClient(credentials) { state -> if (client === created) deps.onState(state) }
+        created = deps.newClient(credentials) { state ->
+            if (client === created) {
+                deps.onState(state)
+                // The client stopped itself (revoked, unusable server URL): nothing to hold.
+                if (state == ConnectionState.OFF) main.post { if (client === created) finish(Stop.CLIENT_STOPPED) }
+            }
+        }
         clientFor = credentials
         client = created
         created.start()
     }
 
-    private fun finish(unpluggedStop: Boolean) {
+    /**
+     * Drops the client and the watch and stops, unless a newer start is already queued
+     * (stopSelf(startId)): that start then begins a fresh watch, which re-checks the policy.
+     */
+    private fun finish(reason: Stop) {
+        stopReason = reason
         stopClient()
-        if (unpluggedStop) deps.onUnpluggedStop()
-        stopSelf()
+        scope?.cancel()
+        scope = null
+        stopSelf(lastStartId)
     }
 
     private fun stopClient() {
@@ -206,5 +262,27 @@ class ConnectivityService : Service() {
         @VisibleForTesting
         @Volatile
         var depsOverride: Deps? = null
+
+        @Volatile
+        private var instance: ConnectivityService? = null
+
+        /** Set by [requestStop], cleared by [clearStopRequest] (each start). */
+        @Volatile
+        var stopRequested: Boolean = false
+            private set
+
+        /**
+         * Stops the service without `stopService`, which crashes the app when it lands
+         * between startForegroundService and the service's startForeground. The service
+         * stops itself once it is in the foreground (now, or at its next onStartCommand).
+         */
+        fun requestStop() {
+            stopRequested = true
+            Handler(Looper.getMainLooper()).post { instance?.onStopRequested() }
+        }
+
+        fun clearStopRequest() {
+            stopRequested = false
+        }
     }
 }

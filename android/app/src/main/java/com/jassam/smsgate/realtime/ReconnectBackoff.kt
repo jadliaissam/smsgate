@@ -30,6 +30,9 @@ class ReconnectBackoff(
         return low + random.nextLong(nominal - low + 1)
     }
 
+    /** A uniformly random delay in `[lowMs, highMs]` (spreading a server-wide reconnect). */
+    fun uniformMs(lowMs: Long, highMs: Long): Long = lowMs + random.nextLong(highMs - lowMs + 1)
+
     /** A jittered delay at the cap, `[maxMs / 2, maxMs]`. */
     fun longDelayMs(): Long = delayMs(Int.MAX_VALUE)
 
