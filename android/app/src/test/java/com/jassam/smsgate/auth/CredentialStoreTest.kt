@@ -10,10 +10,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -83,7 +85,9 @@ class CredentialStoreTest {
     @Test
     fun survivesNewInstanceOnSameFile() = runBlocking {
         store.save("https://a", "d", "dt_1")
-        scope.cancel()
+        // DataStore releases its claim on the file only when its scope's job completes; a bare
+        // cancel() returns first, and a second DataStore on the file then fails on a slow runner.
+        scope.coroutineContext[Job]!!.cancelAndJoin()
         val scope2 = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
             val ds2 = PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file })
