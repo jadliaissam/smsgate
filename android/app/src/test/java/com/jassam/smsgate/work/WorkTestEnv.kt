@@ -81,6 +81,15 @@ internal class MemorySentFcmTokens : SentFcmTokens {
     }
 }
 
+/** In-memory [SyncStatus]. */
+internal class MemorySyncStatus : SyncStatus {
+    val value = kotlinx.coroutines.flow.MutableStateFlow<Long?>(null)
+    override val lastSuccess: kotlinx.coroutines.flow.Flow<Long?> = value
+    override suspend fun markSuccess(atMs: Long) {
+        value.value = atMs
+    }
+}
+
 /**
  * Workers against fakes: a MockWebServer backend, a real CredentialStore (fake cipher),
  * an in-memory journal, a real SmsSender over [FakeTransport] reporting into
@@ -117,6 +126,7 @@ internal class WorkTestEnv(dir: File) : Closeable {
     @Volatile var evaluations = 0
     var evaluate: suspend () -> Unit = { evaluations++ }
     val sentTokens = MemorySentFcmTokens()
+    val syncStatus = MemorySyncStatus()
 
     var heartbeat: () -> Heartbeat = {
         Heartbeat(battery = 81, charging = true, signal = 3, sims = listOf(Sim(0, 11, "Orange")), appVersion = "1.2.3")
@@ -151,6 +161,7 @@ internal class WorkTestEnv(dir: File) : Closeable {
         now = { wall },
         log = { logs += it },
         evaluateConnection = { evaluate() },
+        syncStatus = syncStatus,
     )
 
     fun pair(token: String = TOKEN, deviceId: String = "dev-1") = runBlocking { store.save(base, deviceId, token) }

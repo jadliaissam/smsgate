@@ -37,6 +37,8 @@ class WorkDeps(
     val log: (String) -> Unit = {},
     /** Applies the always-connected policy (Connectivity.evaluate): starts/stops the socket service. Never throws. */
     val evaluateConnection: suspend () -> Unit = {},
+    /** Where SyncWorker records its last successful run (home screen). */
+    val syncStatus: SyncStatus = SyncStatus.None,
 )
 
 /**

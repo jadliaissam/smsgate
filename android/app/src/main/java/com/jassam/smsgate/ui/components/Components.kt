@@ -82,7 +82,7 @@ fun SgCard(
     Column(m.padding(contentPadding), content = content)
 }
 
-private enum class ButtonKind { Primary, Secondary, Ghost }
+private enum class ButtonKind { Primary, Secondary, Ghost, Danger }
 
 /** web Button variant="primary": brand gradient, white label, control shadow. */
 @Composable
@@ -105,6 +105,17 @@ fun SecondaryButton(
     enabled: Boolean = true,
     @DrawableRes icon: Int? = null,
 ) = SgButton(ButtonKind.Secondary, text, onClick, modifier, enabled, loading = false, loadingLabel = null, icon = icon)
+
+/** web Button variant="danger": solid danger fill (destructive confirmations such as Unpair). */
+@Composable
+fun DangerButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    loadingLabel: String? = null,
+) = SgButton(ButtonKind.Danger, text, onClick, modifier, enabled, loading, loadingLabel, icon = null)
 
 /** web Button variant="ghost", in brand: secondary actions and links. */
 @Composable
@@ -133,6 +144,7 @@ private fun SgButton(
         ButtonKind.Primary -> colors.fgOnBrand
         ButtonKind.Secondary -> colors.fg
         ButtonKind.Ghost -> if (dark) Palette.Brand300 else Palette.Brand700
+        ButtonKind.Danger -> colors.fgOnDanger
     }
     var m = modifier
         .heightIn(min = 48.dp)
@@ -143,6 +155,8 @@ private fun SgButton(
         ButtonKind.Secondary -> m.elevation(Elevation.Control, Radii.Control).clip(Radii.Control)
             .background(colors.surface).border(1.dp, colors.border, Radii.Control)
         ButtonKind.Ghost -> m.clip(Radii.Control)
+        ButtonKind.Danger -> m.elevation(Elevation.Control, Radii.Control).clip(Radii.Control)
+            .background(if (dark) Palette.Danger500 else Palette.Danger600)
     }
     m = m.clickable(interactionSource = interaction, indication = ripple(), enabled = active, role = Role.Button, onClick = onClick)
         .alpha(if (enabled) 1f else 0.55f)

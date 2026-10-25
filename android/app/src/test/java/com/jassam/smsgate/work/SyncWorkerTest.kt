@@ -337,4 +337,49 @@ class SyncWorkerTest {
         assertEquals(0, env.server.requestCount)
         assertEquals(1, env.queue.cancelled)
     }
+
+    @Test
+    fun aSuccessfulSyncRecordsItsTime() = runBlocking {
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(env.wall, env.syncStatus.value.value)
+    }
+
+    @Test
+    fun noSyncTimeWhenThePendingCallFails() = runBlocking {
+        respondHeartbeat()
+        env.respondError(500, "internal")
+        run()
+        assertNull(env.syncStatus.value.value)
+    }
+
+    @Test
+    fun noSyncTimeWhenTheHeartbeatFails() = runBlocking {
+        env.dropConnection()
+        respondPending()
+        run()
+        assertNull(env.syncStatus.value.value)
+    }
+
+    @Test
+    fun aFailingSyncStatusStoreDoesNotFailTheSync() = runBlocking {
+        val throwing = object : SyncStatus {
+            override val lastSuccess = kotlinx.coroutines.flow.flowOf<Long?>(null)
+            override suspend fun markSuccess(atMs: Long) = throw java.io.IOException("disk full")
+        }
+        val deps = WorkDeps(
+            credentials = env.deps.credentials, api = env.deps.api, journal = env.deps.journal, sender = env.deps.sender,
+            queue = env.deps.queue, revocation = env.deps.revocation, heartbeat = env.deps.heartbeat, fcmToken = env.deps.fcmToken,
+            sentTokens = env.deps.sentTokens, clockSynced = env.deps.clockSynced, now = env.deps.now, log = env.deps.log,
+            syncStatus = throwing,
+        )
+        respondHeartbeat()
+        respondPending()
+        val worker = androidx.work.testing.TestListenableWorkerBuilder<SyncWorker>(env.app)
+            .setWorkerFactory(SmsGateWorkerFactory { deps })
+            .build()
+        assertEquals(Result.success(), worker.doWork())
+        assertTrue(env.logs.any { "sync status" in it })
+    }
 }

@@ -136,6 +136,9 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
+    // Compose UI tests under Robolectric (screen smoke tests); the manifest adds the
+    // empty test activity to debug builds only.
+    debugImplementation(libs.compose.ui.test.manifest)
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
@@ -158,4 +161,5 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.room.testing)
     testImplementation(libs.work.testing)
+    testImplementation(libs.compose.ui.test.junit4)
 }

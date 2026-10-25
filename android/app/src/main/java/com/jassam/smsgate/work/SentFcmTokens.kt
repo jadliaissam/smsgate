@@ -12,6 +12,12 @@ import java.security.MessageDigest
 interface SentFcmTokens {
     fun matches(deviceId: String, token: String): Boolean
     fun remember(deviceId: String, token: String)
+
+    /**
+     * Whether the server accepted exactly this token for this device at some point,
+     * however long ago (home screen's "push OK"; [matches] also expires the memory).
+     */
+    fun accepted(deviceId: String, token: String): Boolean = matches(deviceId, token)
 }
 
 /**
@@ -30,6 +36,8 @@ class PrefsSentFcmTokens(
         val age = now() - prefs.getLong(KEY_AT, Long.MIN_VALUE)
         return age in 0 until MAX_AGE_MS // a clock moved backwards also re-sends
     }
+
+    override fun accepted(deviceId: String, token: String): Boolean = prefs.getString(KEY, null) == digest(deviceId, token)
 
     override fun remember(deviceId: String, token: String) {
         prefs.edit {

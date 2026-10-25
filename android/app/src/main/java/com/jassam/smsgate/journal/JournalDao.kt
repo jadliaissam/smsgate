@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import com.jassam.smsgate.api.Status
+import kotlinx.coroutines.flow.Flow
 
 /**
  * The message journal. Every state change is a single conditional UPDATE (or a
@@ -162,6 +163,32 @@ abstract class JournalDao {
      */
     @Query("SELECT * FROM journal WHERE state = 'CLAIMED' AND updatedAt < :beforeMs ORDER BY updatedAt")
     abstract suspend fun staleClaimed(beforeMs: Long): List<JournalEntry>
+
+    /**
+     * The log list: the newest [limit] rows (claim time, then id; ids are UUIDv7 so
+     * they break ties in time order), without bodies. Re-emits on every journal change.
+     */
+    @Query(
+        "SELECT id, to_number, state, simSlot, errorCode, parts, partsSent, partsDelivered, createdAt, updatedAt " +
+            "FROM journal ORDER BY createdAt DESC, id DESC LIMIT :limit",
+    )
+    abstract fun observeRecent(limit: Int): Flow<List<JournalSummary>>
+
+    /** One row with its body (the log's detail sheet); null once it is gone. */
+    @Query("SELECT * FROM journal WHERE id = :id")
+    abstract fun observe(id: String): Flow<JournalEntry?>
+
+    /**
+     * Counts of messages claimed in `[fromMs, toMs)` (epoch ms): sent (SENT or
+     * DELIVERED), delivered, failed (FAILED or SKIPPED_EXPIRED). See [DayCounts].
+     */
+    @Query(
+        "SELECT COUNT(CASE WHEN state IN ('SENT', 'DELIVERED') THEN 1 END) AS sent, " +
+            "COUNT(CASE WHEN state = 'DELIVERED' THEN 1 END) AS delivered, " +
+            "COUNT(CASE WHEN state IN ('FAILED', 'SKIPPED_EXPIRED') THEN 1 END) AS failed " +
+            "FROM journal WHERE createdAt >= :fromMs AND createdAt < :toMs",
+    )
+    abstract fun observeCounts(fromMs: Long, toMs: Long): Flow<DayCounts>
 
     /** Crash recovery (D7): rows still SENDING with no progress since [beforeMs] (epoch ms). */
     @Query("SELECT * FROM journal WHERE state = 'SENDING' AND updatedAt < :beforeMs ORDER BY updatedAt")

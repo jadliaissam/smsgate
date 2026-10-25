@@ -36,19 +36,30 @@ import com.jassam.smsgate.sms.SmsIntents
 import com.jassam.smsgate.sms.SmsResultHandler
 import com.jassam.smsgate.sms.SmsSender
 import com.jassam.smsgate.sms.StatusReportQueue
+import com.jassam.smsgate.ui.home.HomeDeps
+import com.jassam.smsgate.ui.home.PhoneInfo
+import com.jassam.smsgate.ui.home.PushStatus
+import com.jassam.smsgate.ui.log.LogViewModel
 import com.jassam.smsgate.ui.onboarding.Oem
 import com.jassam.smsgate.ui.onboarding.OemGuidance
 import com.jassam.smsgate.ui.onboarding.OnboardingPrefs
+import com.jassam.smsgate.ui.onboarding.Permissions
 import com.jassam.smsgate.ui.pairing.Pairer
 import com.jassam.smsgate.ui.pairing.PlayServices
 import com.jassam.smsgate.ui.pairing.PostPairingHook
+import com.jassam.smsgate.ui.pairing.ServerHost
+import com.jassam.smsgate.ui.settings.AppSettings
+import com.jassam.smsgate.ui.settings.SettingsDeps
 import com.jassam.smsgate.work.CrashRecovery
+import com.jassam.smsgate.work.DataStoreSyncStatus
 import com.jassam.smsgate.work.DeviceHeartbeatSource
 import com.jassam.smsgate.work.PrefsSentFcmTokens
 import com.jassam.smsgate.work.Revocation
 import com.jassam.smsgate.work.Scheduler
+import com.jassam.smsgate.work.SyncStatus
 import com.jassam.smsgate.work.WorkDeps
 import com.jassam.smsgate.work.onPaired
+import java.util.TimeZone
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -56,6 +67,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /**
@@ -242,13 +254,99 @@ class AppGraph(context: Context) {
             revocation = revocation,
             heartbeat = heartbeatSource,
             fcmToken = PlayServices::fcmToken,
-            sentTokens = PrefsSentFcmTokens(app),
+            sentTokens = sentFcmTokens,
             clockSynced = { serverClock.isSynced },
             now = System::currentTimeMillis,
             log = ::warn,
             evaluateConnection = { connectivity.evaluate() },
+            syncStatus = syncStatus,
         )
     }
+
+    /** Which FCM token the server last accepted (sync re-sends; Home shows "push OK"). */
+    val sentFcmTokens: PrefsSentFcmTokens by lazy { PrefsSentFcmTokens(app) }
+
+    /** Last successful sync (written by SyncWorker, shown on Home). */
+    val syncStatus: SyncStatus by lazy {
+        DataStoreSyncStatus(
+            PreferenceDataStoreFactory.create(
+                corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+                produceFile = { app.preferencesDataStoreFile("sync_status") },
+            ),
+        )
+    }
+
+    /** Theme override, local device label, cached account details (Task A8). */
+    val appSettings: AppSettings by lazy {
+        AppSettings(
+            PreferenceDataStoreFactory.create(
+                corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+                produceFile = { app.preferencesDataStoreFile("settings") },
+            ),
+        )
+    }
+
+    /** SIMs and the default SMS SIM (binder calls, off the main thread). */
+    suspend fun phoneInfo(): PhoneInfo = withContext(Dispatchers.IO) {
+        val default = try {
+            PlatformSmsTransport.defaultSmsSubscriptionId().takeIf { it >= 0 }
+        } catch (_: RuntimeException) {
+            null
+        }
+        PhoneInfo(simInventory.activeSimsOrNull(), default)
+    }
+
+    /**
+     * Push readiness for Home: no Play services (D11); or whether the server accepted
+     * this phone's current FCM token. Reading the token can take a few seconds.
+     */
+    suspend fun pushStatus(): PushStatus = withContext(Dispatchers.IO) {
+        if (!PlayServices.available(app)) return@withContext PushStatus.NoPlayServices
+        val credentials = credentialStore.load() ?: return@withContext PushStatus.NotRegistered
+        val token = PlayServices.fcmToken() ?: return@withContext PushStatus.NotRegistered
+        if (sentFcmTokens.accepted(credentials.deviceId, token)) PushStatus.Ok else PushStatus.NotRegistered
+    }
+
+    /** What the home screen needs for the paired [serverUrl]. */
+    fun homeDeps(serverUrl: String): HomeDeps = HomeDeps(
+        serverHost = ServerHost.display(serverUrl),
+        credentials = credentialStore::load,
+        me = { c -> deviceApi(c.serverUrl) { c.deviceToken }.me() },
+        revoke = { token -> revocation.onUnauthorized(token) },
+        meCache = appSettings,
+        lastSync = syncStatus.lastSuccess,
+        connection = connectivity.state,
+        alwaysConnected = connectivity.alwaysConnected,
+        deviceLabel = appSettings.deviceLabel,
+        counts = { w -> journalDao.observeCounts(w.startMs, w.endMs) },
+        now = System::currentTimeMillis,
+        zone = TimeZone::getDefault,
+        phone = ::phoneInfo,
+        push = ::pushStatus,
+        log = ::warn,
+    )
+
+    /** The log list and detail sheet over the journal. */
+    fun logViewModel(): LogViewModel = LogViewModel(journalDao::observeRecent, journalDao::observe, ::warn)
+
+    /** What the settings screen needs. */
+    fun settingsDeps(): SettingsDeps = SettingsDeps(
+        credentials = credentialStore::load,
+        unregister = { c -> deviceApi(c.serverUrl) { c.deviceToken }.unregister() },
+        revoke = { token -> revocation.onUnauthorized(token) },
+        alwaysConnected = connectivity.alwaysConnected,
+        setAlwaysConnected = connectivity::setAlwaysConnected,
+        connection = connectivity.state,
+        isCharging = { PowerState.isPluggedIn(app) },
+        batteryExempt = { Permissions.batteryExempt(app) },
+        prefs = appSettings,
+        phone = ::phoneInfo,
+        syncNow = { revocation.exclusive { if (credentialStore.load() != null) scheduler.syncNow() } },
+        lastSync = syncStatus.lastSuccess,
+        now = System::currentTimeMillis,
+        appVersion = BuildConfig.VERSION_NAME,
+        log = ::warn,
+    )
 
     /** FCM push and token handling (SmsGateMessagingService). */
     val pushHandler: PushHandler by lazy { PushHandler(scheduler, { credentialStore.load() != null }, ::warn) }

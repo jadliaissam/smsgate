@@ -114,7 +114,199 @@
     <string name="notification_connected_title">SMSGate is connected</string>
     <string name="notification_connected_text">Messages are sent as soon as they’re queued.</string>
 
-    <!-- Placeholder home (Task A8 builds the real one) -->
-    <string name="home_paired_title">This phone is paired</string>
-    <string name="home_paired_body">Connected to %1$s. Messages queued for this device will be sent from here.</string>
+    <!-- Common (A8) -->
+    <string name="action_retry">Try again</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_fix">Fix</string>
+    <string name="time_just_now">just now</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_log">Log</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home -->
+    <string name="home_title_fallback">This phone</string>
+    <string name="home_paired_as">Paired with %1$s</string>
+    <string name="home_account_loading">Loading account details…</string>
+    <string name="home_account_unknown">Paired. Account details will show once the server answers.</string>
+    <string name="home_dashboard_name">Shown on the dashboard as %1$s</string>
+    <string name="home_account_offline">You’re offline, so account details may be out of date. Messages still go out once the connection is back.</string>
+    <string name="home_account_failed">The server didn’t return the account details. Try again in a moment.</string>
+    <string name="home_no_play_services">Google Play services isn’t available on this phone, so push wake-ups are off. New messages arrive with the sync every 15 minutes. Turn on Always connected in Settings to get them instantly.</string>
+    <string name="home_no_play_services_always">Google Play services isn’t available on this phone, so it relies on Always connected to get new messages instantly. Keep it on.</string>
+    <string name="home_connection_title">Connection</string>
+    <string name="home_server">Server</string>
+    <string name="home_last_sync">Last sync</string>
+    <string name="home_last_sync_never">Not yet</string>
+    <string name="home_push">Push wake-ups</string>
+    <string name="home_live">Live connection</string>
+    <string name="home_open_settings">Connection settings</string>
+    <string name="home_today_title">Today</string>
+    <string name="home_today_sent">Sent</string>
+    <string name="home_today_delivered">Delivered</string>
+    <string name="home_today_failed">Failed</string>
+    <string name="home_stat_spoken">%1$s today: %2$d</string>
+    <string name="home_sims_title">SIM cards</string>
+    <string name="home_sims_loading">Checking…</string>
+    <string name="home_sims_no_permission">Allow phone access so SMSGate can list your SIMs and send from the one each message asks for.</string>
+    <string name="home_sims_none">No active SIM found. Insert a SIM to send messages.</string>
+    <string name="home_warnings_title">Needs your attention</string>
+    <string name="sim_slot">SIM %1$d</string>
+    <string name="sim_default">Default</string>
+    <string name="sim_unknown_carrier">Unknown carrier</string>
+
+    <string name="push_checking">Checking</string>
+    <string name="push_ok">OK</string>
+    <string name="push_not_registered">Not registered</string>
+    <string name="push_unavailable">Unavailable</string>
+    <string name="push_hint_checking">Checking with Google Play services…</string>
+    <string name="push_hint_ok">The server can wake this phone when a message is queued.</string>
+    <string name="push_hint_not_registered">The server doesn’t have this phone’s push token yet. It’s sent with the next sync.</string>
+    <string name="push_hint_unavailable">Needs Google Play services.</string>
+
+    <string name="connection_off">Off</string>
+    <string name="connection_connecting">Connecting</string>
+    <string name="connection_connected">Connected</string>
+    <string name="connection_waiting">Reconnecting</string>
+    <string name="connection_hint_connected">Messages arrive instantly over a live connection.</string>
+    <string name="connection_hint_connecting">Opening a live connection to your server…</string>
+    <string name="connection_hint_waiting">The connection dropped. Retrying shortly; push and sync still work.</string>
+    <string name="connection_hint_off_push">Messages arrive by push wake-up. A live connection opens while charging.</string>
+    <string name="connection_hint_off_sync">Messages arrive with the sync every 15 minutes. A live connection opens while charging.</string>
+    <string name="connection_hint_off_always">Always connected is on, but the connection isn’t running yet. Open the app while charging or check the battery settings.</string>
+
+    <string name="warning_sms_title">SMS permission is off</string>
+    <string name="warning_sms_body">SMSGate can’t send any message until you allow it.</string>
+    <string name="warning_phone_title">SIM list unavailable</string>
+    <string name="warning_phone_body">Without phone access, messages go out from the default SIM only.</string>
+    <string name="warning_notifications_title">Notifications are off</string>
+    <string name="warning_notifications_body">You won’t see the connection notice or alerts when sending stops.</string>
+    <string name="warning_battery_title">Battery optimisation is on</string>
+    <string name="warning_battery_body">Android may delay messages while the phone sleeps. Let SMSGate run in the background.</string>
+    <string name="warning_fix_description">%1$s: %2$s</string>
+
+    <!-- Log -->
+    <string name="log_title">Message log</string>
+    <string name="log_subtitle">Messages this phone picked up, newest first. Message text is removed after 24 hours; the log keeps 30 days.</string>
+    <string name="log_empty_title">No messages yet</string>
+    <string name="log_empty_body">Messages your apps send to this phone will show up here.</string>
+    <string name="log_load_more">Load more</string>
+    <string name="log_open_details">Show details</string>
+    <string name="log_number_ending">number ending in %1$s</string>
+    <string name="log_number_hidden">hidden number</string>
+    <string name="log_row_spoken">To %1$s, %2$s, %3$s</string>
+    <string name="log_row_meta_sim">%1$s · SIM %2$d</string>
+    <string name="log_detail_sim">Sent from SIM %1$d</string>
+    <string name="log_detail_sim_default">Sent from the default SIM</string>
+    <string name="log_detail_timeline">Timeline</string>
+    <string name="log_detail_message">Message</string>
+    <string name="log_detail_body_removed">Message text removed after 24 hours.</string>
+    <string name="log_detail_expires">Valid until %1$s</string>
+    <string name="log_detail_id">ID %1$s</string>
+    <string name="log_report_none">Not final yet.</string>
+    <string name="log_report_pending">Status not yet confirmed by the server; it’s retried automatically.</string>
+    <string name="log_report_confirmed">Status confirmed by the server.</string>
+    <string name="log_step_claimed">Picked up by this phone</string>
+    <string name="log_step_handed">Handed to Android to send</string>
+    <string name="log_step_sent">Sent to the carrier</string>
+    <string name="log_step_delivered">Delivered to the recipient</string>
+    <string name="log_step_failed">Failed</string>
+    <string name="log_step_expired">Not sent: expired</string>
+    <string name="log_step_expired_detail">It was past its validity window, so the phone didn’t send it.</string>
+    <plurals name="log_parts">
+        <item quantity="one">%d SMS part</item>
+        <item quantity="other">%d SMS parts</item>
+    </plurals>
+    <!-- "%1$d of %2$d parts": the count of parts does not inflect "of". -->
+    <string name="log_parts_sent" tools:ignore="PluralsCandidate">%1$d of %2$d parts sent</string>
+    <string name="log_parts_delivered" tools:ignore="PluralsCandidate">%1$d of %2$d parts delivered</string>
+    <string name="log_error_with_code">%1$s (%2$s)</string>
+
+    <string name="status_queued">Queued</string>
+    <string name="status_dispatched">Dispatched</string>
+    <string name="status_sent">Sent</string>
+    <string name="status_delivered">Delivered</string>
+    <string name="status_failed">Failed</string>
+    <string name="status_expired">Expired</string>
+
+    <string name="error_no_service">No mobile network.</string>
+    <string name="error_radio_off">The phone’s radio was off (airplane mode?).</string>
+    <string name="error_generic">The carrier or phone rejected the message.</string>
+    <string name="error_limit">Android’s SMS sending limit was reached.</string>
+    <string name="error_short_code">Sending to short codes isn’t allowed on this phone.</string>
+    <string name="error_permission">SMSGate wasn’t allowed to send SMS.</string>
+    <string name="error_sim_unavailable">The requested SIM isn’t in this phone.</string>
+    <string name="error_no_default_sim">No default SIM is set for SMS.</string>
+    <string name="error_invalid_destination">The number isn’t valid.</string>
+    <string name="error_expired_on_device">It expired before the phone could send it.</string>
+    <string name="error_outcome_unknown">The app stopped while sending, so the result is unknown. It wasn’t retried.</string>
+    <string name="error_device_revoked">The phone was unpaired before sending.</string>
+    <string name="error_delivery_failed">The carrier reported that delivery failed.</string>
+    <string name="error_body_missing">The message had no text.</string>
+    <string name="error_too_many_parts">The message is too long to send.</string>
+    <string name="error_fdn">Blocked by the SIM’s fixed dialling numbers.</string>
+    <string name="error_no_sms_service">This phone can’t send SMS.</string>
+    <string name="error_other">The phone couldn’t send it.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_connection_title">Connection</string>
+    <string name="settings_always_connected">Always connected</string>
+    <string name="settings_always_connected_note">Keeps a live connection so messages arrive instantly. Uses a little more battery.</string>
+    <string name="settings_live_state">Live connection</string>
+    <string name="settings_live_state_hint">Also opens on its own while the phone is charging.</string>
+    <string name="settings_toggle_failed">The setting couldn’t be saved. Try again.</string>
+    <string name="settings_doze_warning">SMSGate isn’t exempt from battery optimisation, so Android may drop the connection while the phone sleeps unplugged. Messages then arrive by push or the 15-minute sync.</string>
+    <string name="settings_allow_background">Allow running in the background</string>
+    <string name="settings_phone_title">This phone</string>
+    <string name="settings_label">Name on this phone</string>
+    <string name="settings_label_hint">Shown on Home only. Rename the device on the dashboard to change its name there.</string>
+    <string name="settings_label_save">Save name</string>
+    <string name="settings_save_failed">The change couldn’t be saved. Try again.</string>
+    <string name="settings_default_sim">Default SIM for messages without a SIM</string>
+    <string name="settings_default_sim_no_permission">Allow phone access to see your SIMs.</string>
+    <string name="settings_default_sim_none">Not set: Android picks the SIM.</string>
+    <string name="settings_sync_title">Sync</string>
+    <string name="settings_sync_now">Sync now</string>
+    <string name="settings_sync_requested">Syncing… it runs as soon as there’s a connection.</string>
+    <string name="settings_sync_done">Synced just now.</string>
+    <string name="settings_sync_last">Last sync %1$s.</string>
+    <string name="settings_sync_never">Not synced yet.</string>
+    <string name="settings_theme_title">Appearance</string>
+    <string name="settings_theme_system">Match the system</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_about_title">About</string>
+    <string name="settings_version">App version</string>
+    <string name="settings_licences">Open-source licences</string>
+    <string name="settings_unpair_title">Unpair</string>
+    <string name="settings_unpair_body">Removes this phone from your account and stops it sending messages. You can pair it again with a new code.</string>
+    <string name="settings_unpair">Unpair phone</string>
+
+    <string name="exemption_title">Keep the connection while the phone sleeps?</string>
+    <string name="exemption_body">On battery, Android pauses background network use. Allow SMSGate to run in the background so Always connected keeps working. Otherwise messages still arrive by push or the 15-minute sync, just not always instantly.</string>
+    <string name="exemption_allow">Allow</string>
+    <string name="exemption_not_now">Not now</string>
+
+    <string name="unpair_confirm_title">Unpair this phone?</string>
+    <string name="unpair_confirm_body">It’s removed from your account, stops sending, and any message it picked up but hasn’t sent is marked failed. Its message log stays on the phone.</string>
+    <string name="unpair_working_title">Unpairing…</string>
+    <string name="unpair_working_body">Removing this phone from your account.</string>
+    <string name="unpair_failed_title">Couldn’t unpair</string>
+    <string name="unpair_failed_network">The server couldn’t be reached, so nothing was changed. Check the connection and try again.</string>
+    <string name="unpair_failed_server">The server couldn’t unpair this phone right now, so nothing was changed. Try again in a moment.</string>
+    <string name="unpair_local">Remove from this phone only</string>
+    <string name="unpair_local_title">Remove from this phone only?</string>
+    <string name="unpair_local_body">This phone forgets its pairing and stops sending. It stays listed on your dashboard until you revoke it there.</string>
+    <string name="unpair_local_confirm">Remove from this phone</string>
+
+    <!-- Open-source licences -->
+    <string name="licences_title">Open-source licences</string>
+    <string name="licences_libraries">Libraries</string>
+    <string name="licence_apache2">Apache License 2.0</string>
+    <string name="licence_ofl">SIL Open Font License 1.1</string>
+    <string name="licence_google_sdk">Android Software Development Kit License (Google)</string>
+    <string name="licences_apache_note">The Apache License 2.0 is available at apache.org/licenses/LICENSE-2.0.</string>
+    <string name="licences_ofl_title">Inter: SIL Open Font License 1.1</string>
 </resources>

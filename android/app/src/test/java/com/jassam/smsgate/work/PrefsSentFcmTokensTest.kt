@@ -38,4 +38,15 @@ class PrefsSentFcmTokensTest {
         now -= 1
         assertFalse(tokens.matches("dev-1", "t1"))
     }
+
+    @Test
+    fun acceptedIgnoresTheMemoryAgeButNotTheTokenOrDevice() {
+        assertFalse(tokens.accepted("dev-1", "t1"))
+        tokens.remember("dev-1", "t1")
+        now += PrefsSentFcmTokens.MAX_AGE_MS * 10
+        assertTrue(tokens.accepted("dev-1", "t1"))
+        assertFalse(tokens.matches("dev-1", "t1"))
+        assertFalse(tokens.accepted("dev-1", "t2"))
+        assertFalse(tokens.accepted("dev-2", "t1"))
+    }
 }
