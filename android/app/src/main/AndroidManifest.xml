@@ -2,6 +2,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Telephony is needed to send, but the app installs (and explains itself) without it. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Onboarding checklist (Task A4): sending, the SIM list (number optional),
+         notifications on API 33+, and the battery optimisation exemption (D12). -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Sideloaded APK (not Play): the direct exemption request is how a gateway
+         keeps receiving wake-ups on aggressive battery managers (D12). -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
+
     <application
         android:name=".App"
         android:allowBackup="false"

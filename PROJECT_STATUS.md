@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-24 (A1 and A3 reviewed and fixed; A4 next).
+Last updated: 2026-10-25 (A0 to A4 done and merged; A5 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -37,7 +37,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 
 **Where things stand in git:**
 - `main` holds the backend, the complete dashboard, CI/CD and this file. It is what runs in production (revision `3d5b2bf` before the history rewrite; the same code now has new hashes). Merging to `main` deploys.
-- `feat/android-app` is pushed and **not merged**. It is `main` plus the Android plan and four finished tasks: A0 (device `me`/`unregister` endpoints), A1 (backend device WebSocket, migration `00006`, 7 new `WS_*` env vars), A2 (Android scaffold) and A3 (Android API client). A1 and A3 each still need work, listed under "Next steps".
+- `main` also holds the Android work A0 to A4 and the backend device WebSocket (migrations `00006` and `00007`), merged on 2026-10-25. The Android app is not released yet: no APK is published. Continue the Android plan on a new branch from `main` (for example `feat/android-a5`) and merge by pull request.
 - On 2026-10-24 all commit messages on `main` and `feat/android-app` were rewritten to remove AI co-author trailers. Code is unchanged. Local backup branches `backup/main-before-rewrite` and `backup/android-before-rewrite` hold the old history; delete them when no longer wanted.
 - `smsgate-e5a24-*.json` (Firebase service-account key) is git-ignored; never commit it. `google-services.json` (Android Firebase config) is private and git-ignored everywhere; copy it into `android/app/` for local builds. CI reads it from the GitHub secret `GOOGLE_SERVICES_JSON_BASE64`.
 - `.superpowers/sdd/` holds the detailed progress ledgers, including every ruling and deferred minor issue (`2026-10-24-android-app/progress.md` is the Android one). It is git-ignored, so it exists only on the original machine. If it is missing, this file and `git log` are the record.
@@ -50,7 +50,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** resume the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) on branch `feat/android-app` with "Next steps" item 1 below.
+**Suggested next step:** resume the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A5 (message journal and SMS sender), on a new branch from `main`.
 
 **Rules that apply:**
 - No `Co-Authored-By` trailer and no AI attribution of any kind in commits or PRs (the user's standing instruction, 2026-10-24).
@@ -143,10 +143,10 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0 to A3 approved (A1 and A3 after two fix rounds each). A4 to A10 not started |
+| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 to A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
-Live dashboard: https://smsgate-web.captain-1.duckdns.org. The WebSocket endpoint is not live: it exists only on `feat/android-app`.
+Live dashboard: https://smsgate-web.captain-1.duckdns.org. The device WebSocket (`/device/v1/ws`) is live since 2026-10-25; no phone has connected to it yet.
 
 ## Product decisions
 
@@ -171,7 +171,7 @@ One monorepo; each deployable project has a `Dockerfile` and `captain-definition
 smsgate/
   backend/                 Go API server
   web/                     React dashboard, served by nginx
-  android/                 Kotlin + Compose app (branch feat/android-app only for now)
+  android/                 Kotlin + Compose app (not released yet)
   docs/specs/              design spec
   docs/superpowers/plans/  implementation plans (backend core, web dashboard, Android app)
   scripts/smoke.sh         end-to-end smoke test against a running server
@@ -320,15 +320,16 @@ The work followed a plan → implement → review loop:
 
 ## Next steps
 
-In order. Items 1 to 4 are on `feat/android-app`; merge it to `main` only after item 3, because merging deploys the backend WebSocket.
+In order. Items 1 to 4 are done and merged.
 
-1. **Android A1 (done).** Reviewed twice; fixes: wake bursts queue instead of dropping the socket, sockets ordered by a DB sequence (migration `00007`), wakes replayed after a LISTEN outage (new env `WS_RESYNC_MARGIN`). Open minors are in the ledger. `GOMEMLIMIT` is 160 MiB (10k sockets need about 110 MiB): set on 2026-10-24 as a CapRover env var on `smsgate-api` (production, running the old code) and as the image default on this branch. During a rolling deploy, old and new instances ignore each other's `smsgate_ws` payloads, so replacing a socket across versions does not work until all instances are updated.
-2. **Android A3 (done).** Reviewed twice. `CredentialStore` now serializes writes, runs Keystore work on IO, has `clearIfToken`/`clearIfDevice` for the 401 path, and clears even when cancelled. The instrumented Keystore test is left for A10.
-3. **Android A4 to A10**, in plan order (A7 note: run `pending()` on every WebSocket (re)connect and treat repeated `new` frames idempotently; the backend replays at most 64 wakes per device after an outage): onboarding, permissions and pairing; message journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens; release pipeline and APK download; end-to-end test on a real phone with performance measurements.
-4. **Before merging `feat/android-app`:**
-   - Run the backend and Android CI on the branch (a pull request does this).
-   - `GOMEMLIMIT` is already 160 MiB on `smsgate-api` (done 2026-10-24).
-   - Production already has `DEVICE_ONLINE_WINDOW=20m`, and CapRover's `smsgate-web` already has WebSocket support and 7-minute proxy timeouts.
+1. **Android A1 (done).** Reviewed twice; fixes: wake bursts queue instead of dropping the socket, sockets ordered by a DB sequence (migration `00007`), wakes replayed after a LISTEN outage (new env `WS_RESYNC_MARGIN`). Open minors are in the ledger. `GOMEMLIMIT` is 160 MiB (10k sockets need about 110 MiB), set as a CapRover env var on `smsgate-api` and as the image default. During a rolling deploy, old and new instances ignore each other's `smsgate_ws` payloads, so replacing a socket across versions does not work until all instances are updated.
+2. **Android A3 (done).** Reviewed twice. `CredentialStore` serializes writes, runs Keystore work on IO, has `clearIfToken`/`clearIfDevice` for the 401 path, and clears even when cancelled. The instrumented Keystore test is left for A10.
+3. **Android A4 (done).** Onboarding checklist, permissions, pairing by QR (with a confirmation dialog for any server other than the built-in default), code or login, SIM inventory, Play-services-free path, OEM battery guidance. 132 unit tests. Notes for later tasks:
+   - A6: set the `PostPairingHook` in `AppGraph` (it is a no-op marked `TODO(A6)`) and give it a time limit; handle `onNewToken` arriving before pairing; pairing still uses the deprecated `FirebaseMessaging.getToken()`.
+   - A8: unpairing only has to clear `CredentialStore`; the pairing form resets by itself.
+   - A10: check the QR scan, the confirmation dialog and the OEM settings screens on real phones (portrait and landscape); they cannot be checked in unit tests. Robolectric runs on SDK 34 because the build JDK is 17.
+   - Minor open items are in the ledger (default-server test variants, main-thread preference reads during composition).
+4. **Android A5 to A10**, in plan order (A7 note: run `pending()` on every WebSocket (re)connect and treat repeated `new` frames idempotently; the backend replays at most 64 wakes per device after an outage): message journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens; release pipeline and APK download; end-to-end test on a real phone with performance measurements.
 5. **Release signing.** Create a release keystore (outside the repo, with a backup) and add GitHub secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Then tag `android-v<version>` to publish the APK.
 6. **Quota enforcement** (build step 6): plans are seeded, but messages per month and device limits are not enforced. Needed before opening sign-ups to the public.
 7. **Check the CapRover registry login.** CapRover pulls images from GHCR using the user's broad GitHub token. Replace it with a token that only has `read:packages`.
