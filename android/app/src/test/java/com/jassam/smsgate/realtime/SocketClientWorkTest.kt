@@ -47,6 +47,11 @@ class SocketClientWorkTest {
         override fun onMessage(webSocket: WebSocket, text: String) {
             messages += text
         }
+        // Complete the close handshake: MockWebServer.close() waits for its socket threads and
+        // throws AssertionError("Gave up waiting for executor to terminate") if a socket stays open.
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(code, null)
+        }
     }
 
     @Before
