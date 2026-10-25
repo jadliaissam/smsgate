@@ -34,9 +34,8 @@ sealed interface PairingResult {
 }
 
 /**
- * Runs after credentials are stored. Task A6 implements it to schedule the
- * periodic sync/heartbeat worker and run a first catch-up; until then the app
- * wires a no-op (see AppGraph.postPairingHook).
+ * Runs after credentials are stored: AppGraph schedules the periodic sync, a first
+ * catch-up and the FCM token refresh. [Pairer] bounds it in time.
  */
 fun interface PostPairingHook {
     suspend fun onPaired()
@@ -75,6 +74,8 @@ class Pairer(
     private val fcmToken: suspend () -> String?,
     private val appVersion: String,
     private val postPairing: PostPairingHook,
+    /** Upper bound for [postPairing]: it runs in a non-cancellable block that pairing waits for. */
+    private val postPairingTimeoutMs: Long = POST_PAIRING_TIMEOUT_MS,
     /** Diagnostics sink (android.util.Log in the app); messages never carry secrets. */
     private val warn: (String) -> Unit = {},
 ) {
@@ -122,11 +123,13 @@ class Pairer(
                 return@withContext PairingResult.Failure(PairingError.StorageFailed)
             }
             try {
-                postPairing.onPaired()
+                // Bounded: this block is not cancellable, and the user waits for it.
+                withTimeoutOrNull(postPairingTimeoutMs) { postPairing.onPaired() }
+                    ?: warn("post-pairing hook timed out")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Paired regardless: the periodic sync (A6) reschedules itself on app start.
+                // Paired regardless: the app schedules the sync again on its next start.
                 warn("post-pairing hook failed: ${e.javaClass.simpleName}")
             }
             PairingResult.Success
@@ -141,5 +144,6 @@ class Pairer(
     private companion object {
         const val MAX_APP_VERSION = 32
         const val ORPHAN_UNREGISTER_TIMEOUT_MS = 5_000L
+        const val POST_PAIRING_TIMEOUT_MS = 10_000L
     }
 }

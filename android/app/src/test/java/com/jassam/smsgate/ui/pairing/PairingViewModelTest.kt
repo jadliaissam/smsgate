@@ -1,6 +1,7 @@
 package com.jassam.smsgate.ui.pairing
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.viewModelScope
 import com.jassam.smsgate.api.DeviceApi
 import com.jassam.smsgate.api.DeviceHttp
 import com.jassam.smsgate.api.ServerUrl
@@ -17,6 +18,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -58,8 +61,14 @@ class PairingViewModelTest {
         store = CredentialStore(PreferenceDataStoreFactory.create(scope = scope, produceFile = { file }), FakeTokenCipher())
     }
 
+    private val vms = mutableListOf<PairingViewModel>()
+
     @After
     fun tearDown() {
+        // Stop each view model's collection of the credential state (a flowOn(IO) producer)
+        // while Main is still set: a producer finishing after resetMain would report an
+        // uncaught exception into the next runTest-based test in this JVM.
+        runBlocking { vms.forEach { it.viewModelScope.coroutineContext.job.cancelAndJoin() } }
         server.close()
         scope.cancel()
         Dispatchers.resetMain()
@@ -85,7 +94,7 @@ class PairingViewModelTest {
         playServices = playServices,
         normalizeServerUrl = { ServerUrl.normalize(it, allowLocalHttp = true) },
         pairingStates = store.state,
-    )
+    ).also { vms += it }
 
     private fun enqueueCreated() = server.enqueue(
         MockResponse.Builder().code(201).setHeader("Content-Type", "application/json")

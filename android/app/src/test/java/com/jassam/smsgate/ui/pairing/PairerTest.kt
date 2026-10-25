@@ -70,6 +70,7 @@ class PairerTest {
         sims: List<Sim> = listOf(Sim(0, 3, "Orange"), Sim(1, 7, "inwi", "+212600000000")),
         fcm: String? = "fcm-token-1",
         hook: PostPairingHook = PostPairingHook { hookCalls++ },
+        hookTimeoutMs: Long = 10_000,
     ) = Pairer(
         normalizeServerUrl = { ServerUrl.normalize(it, allowLocalHttp = true) },
         apiFactory = { url, token -> DeviceApi(url, token, client) },
@@ -78,6 +79,7 @@ class PairerTest {
         fcmToken = { fcmCalls++; fcm },
         appVersion = "1.2.3",
         postPairing = hook,
+        postPairingTimeoutMs = hookTimeoutMs,
     )
 
     private fun enqueue(code: Int, body: String, vararg headers: Pair<String, String>) {
@@ -294,6 +296,16 @@ class PairerTest {
         val result = pairer(hook = { error("scheduler down") }).pair(code(), "Pixel", true)
         assertEquals(PairingResult.Success, result)
         assertTrue(store.load() != null)
+    }
+
+    @Test(timeout = 10_000)
+    fun aHangingHookIsBoundedAndPairingStillSucceeds() = runBlocking {
+        enqueueCreated()
+        val started = System.nanoTime()
+        val result = pairer(hook = { kotlinx.coroutines.awaitCancellation() }, hookTimeoutMs = 200).pair(code(), "Pixel", true)
+        assertEquals(PairingResult.Success, result)
+        assertTrue(store.load() != null)
+        assertTrue("hook must be bounded", System.nanoTime() - started < 5_000_000_000L)
     }
 
     @Test
