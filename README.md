@@ -198,10 +198,10 @@ Releases are cut by pushing a tag; nothing is built or signed on a developer mac
 
 `.github/workflows/android.yml` then runs the normal checks (token drift, lint, unit tests, debug build) and the `release` job, which:
 
-- rejects a tag that is not `android-v<semver>` with an error, before touching any secret;
+- rejects a tag that is not `android-v<semver>` with an error, before any signing secret is used (the `build` job still runs first, with the Firebase client config);
 - sets `versionName` to the tag without `android-v` and `versionCode` to the workflow run number (it only grows, so every later tag can update an installed app);
 - decodes the keystore and `google-services.json` from secrets, builds `assembleRelease` (R8), checks the signature with `apksigner verify` and deletes the keystore afterwards, even on failure;
-- publishes a GitHub Release named after the tag with `smsgate.apk` and `mapping-<tag>.txt` (to de-obfuscate crash traces). A plain version becomes the repository's latest release, so the dashboard link serves it immediately; a pre-release tag (with `-`, for example `-rc1`) is marked pre-release and never becomes latest.
+- publishes a GitHub Release named after the tag with `smsgate.apk` and `mapping-<tag>.txt` (to de-obfuscate crash traces). A plain version becomes the repository's latest release, so the dashboard link serves it immediately (GitHub's "latest" is repository-wide: do not mark an older version line, or a non-Android release, as latest, or the download link serves the wrong file or returns 404); a pre-release tag (with `-`, for example `-rc1`) is marked pre-release and never becomes latest.
 
 Required repository secrets: `GOOGLE_SERVICES_JSON_BASE64`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Only the release job sees the keystore secrets, and it is the only job with `contents: write`.
 

@@ -95,7 +95,8 @@ jobs:
     # versionCode is VERSION_CODE (this workflow's run number, so a later tag always gets a
     # higher one); versionName is the tag without "android-v".
     needs: build
-    if: startsWith(github.ref, 'refs/tags/android-v')
+    # push only: a manual workflow_dispatch run on a tag must not rebuild and overwrite a release.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-v')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -123,18 +124,6 @@ jobs:
           # The build runs third-party Gradle plugins: keep the write token out of .git/config.
           persist-credentials: false
 
-      - name: write google-services.json and the keystore
-        env:
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          for s in GOOGLE_SERVICES_JSON_BASE64 ANDROID_KEYSTORE_BASE64; do
-            if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
-          done
-          umask 077
-          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -148,6 +137,19 @@ jobs:
         with:
           cache-read-only: true
 
+      # Written only now, after the third-party setup actions have run.
+      - name: write google-services.json and the keystore
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          for s in GOOGLE_SERVICES_JSON_BASE64 ANDROID_KEYSTORE_BASE64; do
+            if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
+          done
+          umask 077
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
       - name: assemble signed release
         working-directory: android
         env:
@@ -160,8 +162,8 @@ jobs:
           for s in ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [ -z "${!s}" ]; then echo "::error::The $s secret is empty; a release needs it."; exit 1; fi
           done
-          # No configuration cache and no daemon: keeps the signing secrets out of cached
-          # build state and out of a Gradle process outliving this step.
+          # No configuration cache: keeps the signing secrets out of cached build state.
+          # (--no-daemon stops the Gradle daemon; the runner is ephemeral anyway.)
           ./gradlew --no-configuration-cache --no-daemon assembleRelease
           apk=app/build/outputs/apk/release/app-release.apk
           # Fails on an unsigned APK; prints the (public) signing certificate digests.
