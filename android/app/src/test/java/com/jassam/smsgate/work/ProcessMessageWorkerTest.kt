@@ -2,6 +2,7 @@ package com.jassam.smsgate.work
 
 import androidx.work.ListenableWorker.Result
 import androidx.work.workDataOf
+import com.jassam.smsgate.api.ClaimedMessage
 import com.jassam.smsgate.api.Status
 import com.jassam.smsgate.journal.JournalState
 import com.jassam.smsgate.journal.PendingReport
@@ -9,6 +10,8 @@ import com.jassam.smsgate.journal.claimedEntry
 import com.jassam.smsgate.sms.ErrorCodes
 import com.jassam.smsgate.work.WorkTestEnv.Companion.FUTURE
 import com.jassam.smsgate.work.WorkTestEnv.Companion.ID
+import com.jassam.smsgate.work.WorkTestEnv.Companion.ID2
+import kotlin.time.Instant
 import com.jassam.smsgate.work.WorkTestEnv.Companion.PAST
 import com.jassam.smsgate.work.WorkTestEnv.Companion.claimJson
 import java.util.concurrent.CountDownLatch
@@ -98,6 +101,49 @@ class ProcessMessageWorkerTest {
         assertEquals(listOf(Result.success(), Result.success()), results)
         assertEquals(2, env.server.requestCount)
         assertEquals(1, env.transport.sends.size)
+    }
+
+    @Test
+    fun aRowInsertedAfterThePreCheckStopsTheSend() = runBlocking {
+        // The insert guard on its own (the pre-check can't see a row a racing job
+        // inserted after it ran): insertClaimed returns false, so nothing is sent even
+        // though the existing row is CLAIMED and markSending would let a send through.
+        env.dao.insertClaimed(claimedEntry(ID, now = env.wall).copy(expiresAt = env.wall + 600_000))
+        val claimed = ClaimedMessage(
+            id = ID, to = "+212600000001", body = "hi", simSlot = null,
+            expiresAt = Instant.fromEpochMilliseconds(env.wall + 600_000), serverTime = Instant.fromEpochMilliseconds(env.wall),
+        )
+        val worker = env.worker<ProcessMessageWorker>(ProcessMessageWorker.input(ID))
+        assertEquals(Result.success(), worker.journalAndSend(claimed))
+        assertTrue(env.transport.sends.isEmpty())
+        assertEquals(JournalState.CLAIMED, env.dao.get(ID)!!.state)
+    }
+
+    @Test
+    fun aProxyErrorWithoutTheBackendEnvelopeRetriesTheClaim() = runBlocking {
+        env.respond(404, "<html>not found</html>")
+        assertEquals(Result.retry(), run())
+        assertTrue(env.transport.sends.isEmpty())
+    }
+
+    @Test
+    fun revocationAbandonsClaimedRowsSoARePairedPhoneNeverSendsThem() = runBlocking {
+        val stale = env.wall - CrashRecovery.STALE_AFTER_MS - 1
+        env.dao.insertClaimed(claimedEntry(ID2, now = stale).copy(expiresAt = env.wall + 3_600_000))
+        env.respondError(401, "unauthorized")
+        assertEquals(Result.failure(), run())
+        val row = env.dao.get(ID2)!!
+        assertEquals(JournalState.FAILED, row.state)
+        assertEquals(ErrorCodes.DEVICE_REVOKED, row.errorCode)
+        assertEquals(setOf(Status.FAILED), row.acked) // nothing left to report
+
+        // Re-paired as a new device: its sync neither resumes nor reports the old row.
+        env.pair(token = "dt_2", deviceId = "dev-2")
+        env.respond(200, """{"server_time":"${WorkTestEnv.SERVER_TIME}"}""")
+        env.respond(200, """{"server_time":"${WorkTestEnv.SERVER_TIME}","messages":[]}""")
+        assertEquals(Result.success(), env.worker<SyncWorker>(androidx.work.Data.EMPTY).doWork())
+        assertTrue(env.transport.sends.isEmpty())
+        assertTrue(env.queue.reports.isEmpty())
     }
 
     @Test

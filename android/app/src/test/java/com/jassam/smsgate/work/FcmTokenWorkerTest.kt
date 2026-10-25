@@ -7,6 +7,7 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -30,12 +31,12 @@ class FcmTokenWorkerTest {
     @After
     fun tearDown() = env.close()
 
-    private fun run(token: String?, attempt: Int = 0): Result = runBlocking {
+    private fun run(token: String, attempt: Int = 0): Result = runBlocking {
         env.worker<FcmTokenWorker>(FcmTokenWorker.input(token), attempt).doWork()
     }
 
     @Test
-    fun sendsTheGivenToken() = runBlocking {
+    fun sendsTheTokenAndRemembersIt() = runBlocking {
         env.pair()
         env.respond(204)
         assertEquals(Result.success(), run("fcm-new"))
@@ -44,34 +45,33 @@ class FcmTokenWorkerTest {
         assertEquals("/device/v1/fcm-token", r.url.encodedPath)
         assertEquals("Bearer dt_1", r.headers["Authorization"])
         assertEquals(Json.parseToJsonElement("""{"fcm_token":"fcm-new"}"""), with(env) { r.json() })
+        assertTrue(env.sentTokens.matches("dev-1", "fcm-new"))
     }
 
     @Test
-    fun withoutATokenSendsTheCurrentOne() = runBlocking {
+    fun aTokenTheServerAlreadyHasIsNotSentAgain() = runBlocking {
         env.pair()
-        env.respond(204)
-        assertEquals(Result.success(), run(null))
-        assertEquals(Json.parseToJsonElement("""{"fcm_token":"fcm-current"}"""), with(env) { env.take().json() })
+        env.sentTokens.remember("dev-1", "fcm-new")
+        assertEquals(Result.success(), run("fcm-new"))
+        assertEquals(0, env.server.requestCount)
     }
 
     @Test
-    fun noPlayServicesTokenDoesNothing() = runBlocking {
+    fun missingTokenFails() = runBlocking {
         env.pair()
-        env.fcm = null
-        assertEquals(Result.success(), run(null))
+        assertEquals(Result.failure(), env.worker<FcmTokenWorker>(Data.EMPTY).doWork())
         assertEquals(0, env.server.requestCount)
     }
 
     @Test
     fun unpairedDoesNothingAndDoesNotRevoke() = runBlocking {
-        assertEquals(Result.success(), env.worker<FcmTokenWorker>(Data.EMPTY).doWork())
         assertEquals(Result.success(), run("fcm-new"))
         assertEquals(0, env.server.requestCount)
         assertEquals(0, env.queue.cancelled)
     }
 
     @Test
-    fun retriesOnNetworkAndServerErrors() = runBlocking {
+    fun retriesOnNetworkAndServerErrorsBoundedly() = runBlocking {
         env.pair()
         env.dropConnection()
         assertEquals(Result.retry(), run("fcm-new"))
@@ -79,6 +79,7 @@ class FcmTokenWorkerTest {
         assertEquals(Result.retry(), run("fcm-new", attempt = 1))
         env.respondError(503, "busy")
         assertEquals(Result.failure(), run("fcm-new", attempt = FcmTokenWorker.MAX_ATTEMPTS - 1))
+        assertTrue(env.sentTokens.sent.isEmpty())
     }
 
     @Test

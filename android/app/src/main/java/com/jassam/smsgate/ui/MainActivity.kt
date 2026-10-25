@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import com.jassam.smsgate.appGraph
 import com.jassam.smsgate.ui.theme.SmsGateTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -22,7 +23,10 @@ class MainActivity : ComponentActivity() {
             window.colorMode = ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
         }
         // Paired: periodic + immediate sync (unique KEEP, so recreation adds nothing).
-        if (savedInstanceState == null) lifecycleScope.launch { appGraph.onAppStart() }
+        if (savedInstanceState == null) {
+            val graph = appGraph
+            lifecycleScope.launch(Dispatchers.Default) { graph.onAppStart() }
+        }
         setContent {
             SmsGateTheme {
                 AppRoot(appGraph)

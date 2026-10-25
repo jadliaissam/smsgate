@@ -12,8 +12,12 @@ import kotlinx.coroutines.withContext
  * the credentials are wiped only if they still hold the token the request used
  * ([CredentialStore.clearIfToken], never an unconditional clear), then all
  * WorkManager work is cancelled (process, report, sync and token jobs, so nothing
- * driven by FCM keeps running). The journal is kept. The UI follows the credential
- * state back to pairing on its own.
+ * driven by FCM keeps running) and journal rows still CLAIMED are abandoned
+ * ([CrashRecovery.abandonClaimed]) so a later pairing never sends them. The journal
+ * itself is kept. The UI follows the credential state back to pairing on its own.
+ *
+ * A send already handed to Android when the 401 arrives is not undone: its row stays
+ * SENDING and a later pairing's recovery settles it as `outcome_unknown`.
  *
  * [exclusive] runs the post-pairing scheduling under the same lock, so a revocation
  * decided while unpaired can't cancel the work a concurrent pairing just scheduled.
@@ -21,6 +25,7 @@ import kotlinx.coroutines.withContext
 class Revocation(
     private val credentials: CredentialStore,
     private val cancelAllWork: suspend () -> Unit,
+    private val abandonClaimed: suspend () -> Unit = {},
     private val log: (String) -> Unit = {},
 ) {
     private val lock = Mutex()
@@ -40,6 +45,11 @@ class Revocation(
             }
             log(if (cleared) "device revoked: credentials wiped, work cancelled" else "no credentials: work cancelled")
             cancelAllWork()
+            try {
+                abandonClaimed()
+            } catch (e: Exception) {
+                log("abandoning claimed rows failed: ${e.javaClass.simpleName}")
+            }
             true
         }
     }

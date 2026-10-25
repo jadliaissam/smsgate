@@ -136,6 +136,24 @@ class ReportStatusWorkerTest {
     }
 
     @Test
+    fun aProxy404WithoutTheBackendEnvelopeIsRetried() = runBlocking {
+        decided(Status.SENT)
+        env.respond(404, "<html>not found</html>")
+        assertEquals(Result.retry(), run(Status.SENT))
+        env.respond(400, "")
+        assertEquals(Result.retry(), run(Status.SENT, attempt = 1))
+        assertTrue(acked().isEmpty())
+    }
+
+    @Test
+    fun anyEnvelopedClientErrorIsFinal() = runBlocking {
+        decided(Status.SENT)
+        env.respondError(400, "invalid_json")
+        assertEquals(Result.success(), run(Status.SENT))
+        assertEquals(setOf(Status.SENT), acked())
+    }
+
+    @Test
     fun unauthorizedWipesMatchingCredentialsAndCancelsWork() = runBlocking {
         decided(Status.SENT)
         env.respondError(401, "unauthorized")

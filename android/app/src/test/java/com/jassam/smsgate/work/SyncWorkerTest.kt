@@ -161,6 +161,58 @@ class SyncWorkerTest {
     }
 
     @Test
+    fun staleClaimedRowWaitsWhileTheServerClockIsUnsynced() = runBlocking {
+        // The phone's clock is behind: by its own clock the message is still valid,
+        // but nothing has told this process the server time yet (heartbeat and pending fail).
+        env.dao.insertClaimed(
+            JournalEntry(
+                id = ID, to = "+212600000001", body = "hi", simSlot = null,
+                expiresAt = env.wall + 3_600_000, createdAt = stale, updatedAt = stale,
+            ),
+        )
+        env.dropConnection()
+        env.dropConnection()
+        assertEquals(Result.retry(), run())
+        assertTrue(env.transport.sends.isEmpty())
+        assertEquals(JournalState.CLAIMED, env.dao.get(ID)!!.state)
+
+        // Next sync reaches the server: the clock is synced and the row is resumed once.
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run(attempt = 1))
+        assertEquals(1, env.transport.sends.size)
+    }
+
+    @Test
+    fun everySyncReAssertsThePeriodicJob() = runBlocking {
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(1, env.queue.periodic)
+    }
+
+    @Test
+    fun theCurrentFcmTokenIsReSentOnlyWhenTheServerMayNotHaveIt() = runBlocking {
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(listOf("fcm-current"), env.queue.tokens)
+
+        env.sentTokens.remember("dev-1", "fcm-current")
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(listOf("fcm-current"), env.queue.tokens)
+
+        env.fcm = null // no Play services
+        env.sentTokens.sent.clear()
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(listOf("fcm-current"), env.queue.tokens)
+    }
+
+    @Test
     fun freshClaimedRowIsLeftToItsWorker() = runBlocking {
         env.dao.insertClaimed(claimedEntry(ID, now = env.wall).copy(expiresAt = env.wall + 600_000))
         respondHeartbeat()

@@ -31,7 +31,9 @@ import com.jassam.smsgate.ui.onboarding.OnboardingPrefs
 import com.jassam.smsgate.ui.pairing.Pairer
 import com.jassam.smsgate.ui.pairing.PlayServices
 import com.jassam.smsgate.ui.pairing.PostPairingHook
+import com.jassam.smsgate.work.CrashRecovery
 import com.jassam.smsgate.work.DeviceHeartbeatSource
+import com.jassam.smsgate.work.PrefsSentFcmTokens
 import com.jassam.smsgate.work.Revocation
 import com.jassam.smsgate.work.Scheduler
 import com.jassam.smsgate.work.WorkDeps
@@ -102,8 +104,15 @@ class AppGraph(context: Context) {
      */
     val statusReportQueue: StatusReportQueue get() = scheduler
 
-    /** The single 401 path: wipe credentials (if still the token used) and cancel all work. */
-    val revocation: Revocation by lazy { Revocation(credentialStore, scheduler::cancelAll, ::warn) }
+    /** The single 401 path: wipe credentials (if still the token used), cancel all work, abandon CLAIMED rows. */
+    val revocation: Revocation by lazy {
+        Revocation(
+            credentials = credentialStore,
+            cancelAllWork = scheduler::cancelAll,
+            abandonClaimed = { CrashRecovery.abandonClaimed(journalDao, System.currentTimeMillis()) },
+            log = ::warn,
+        )
+    }
 
     /** Hands claimed messages to SmsManager (at most once per journal row). */
     val smsSender: SmsSender by lazy {
@@ -139,13 +148,15 @@ class AppGraph(context: Context) {
             revocation = revocation,
             heartbeat = DeviceHeartbeatSource(app, simInventory, BuildConfig.VERSION_NAME),
             fcmToken = PlayServices::fcmToken,
+            sentTokens = PrefsSentFcmTokens(app),
+            clockSynced = { serverClock.isSynced },
             now = System::currentTimeMillis,
             log = ::warn,
         )
     }
 
     /** FCM push and token handling (SmsGateMessagingService). */
-    val pushHandler: PushHandler by lazy { PushHandler(scheduler) { credentialStore.load() != null } }
+    val pushHandler: PushHandler by lazy { PushHandler(scheduler, { credentialStore.load() != null }, ::warn) }
 
     /** Onboarding flags (checklist done, permissions asked, OEM step done). */
     val onboardingPrefs: OnboardingPrefs by lazy { OnboardingPrefs(app) }
@@ -155,13 +166,15 @@ class AppGraph(context: Context) {
 
     /**
      * Runs once credentials are stored after pairing (bounded by Pairer): periodic +
-     * immediate sync and the current FCM token, serialized with revocation.
+     * immediate sync, serialized with revocation. If the timeout cuts it short, the
+     * next sync or app start schedules the periodic job again (KEEP).
      */
     val postPairingHook: PostPairingHook = PostPairingHook { revocation.exclusive { scheduler.onPaired() } }
 
     /**
-     * App start (MainActivity): when paired, make sure the periodic sync exists (KEEP)
-     * and run one sync now. Never throws.
+     * App start (MainActivity, off the main thread so WorkManager's initialisation is
+     * not on the cold-start path): when paired, make sure the periodic sync exists
+     * (KEEP) and run one sync now. Never throws.
      */
     suspend fun onAppStart() {
         try {

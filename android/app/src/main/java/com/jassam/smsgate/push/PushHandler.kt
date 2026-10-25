@@ -2,39 +2,65 @@ package com.jassam.smsgate.push
 
 import com.jassam.smsgate.work.MessageIds
 import com.jassam.smsgate.work.WorkQueue
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * What an FCM push or token refresh does (logic of [SmsGateMessagingService]).
  * Pushes only wake the app: the payload is `{type:"new", message_id}` and the body
- * comes from the claim over HTTPS. Never logs payloads, numbers or tokens.
+ * comes from the claim over HTTPS. Never throws (it runs on Firebase's thread) and
+ * never logs payloads, numbers or tokens.
  */
 class PushHandler(
     private val queue: WorkQueue,
     private val isPaired: suspend () -> Boolean,
+    private val log: (String) -> Unit = {},
 ) {
     /**
      * `type == "new"` with a UUID `message_id` → expedited claim-and-send, unique per
      * id (KEEP, so duplicate pushes collapse), and an immediate sync (catch-up for
-     * anything else queued). Anything else is ignored.
+     * anything else queued; it also re-asserts the periodic sync). Anything else is ignored.
      */
     fun onMessage(data: Map<String, String>) {
         if (data[KEY_TYPE] != TYPE_NEW) return
         val id = MessageIds.normalize(data[KEY_MESSAGE_ID]) ?: return
-        queue.processMessage(id, expedited = true)
-        queue.syncNow()
+        guarded("push") {
+            queue.processMessage(id, expedited = true)
+            queue.syncNow()
+        }
     }
 
     /**
-     * A refreshed FCM token: sent to the server when paired, dropped otherwise (pairing
-     * registers with the current token and re-sends it afterwards, see
-     * [com.jassam.smsgate.work.FcmTokenWorker]). If the pairing state can't be read in
-     * time the job is enqueued anyway; it does nothing when unpaired.
+     * A refreshed FCM token: sent to the server when paired, dropped otherwise (the next
+     * sync after pairing re-sends the current token if the server may not have it). If
+     * the pairing state can't be read (timeout, Keystore error) the job is enqueued
+     * anyway; it does nothing when unpaired.
      */
     suspend fun onNewToken(token: String) {
         if (token.isBlank() || token.length > MAX_TOKEN) return
-        val paired = withTimeoutOrNull(PAIRED_CHECK_TIMEOUT_MS) { isPaired() } ?: true
-        if (paired) queue.setFcmToken(token)
+        if (pairedOrUnknown()) guarded("token") { queue.setFcmToken(token) }
+    }
+
+    /** FCM dropped pending pushes for this phone (too many, or offline too long): catch up now. */
+    suspend fun onDeletedMessages() {
+        if (pairedOrUnknown()) guarded("deleted messages") { queue.syncNow() }
+    }
+
+    private suspend fun pairedOrUnknown(): Boolean = try {
+        withTimeoutOrNull(PAIRED_CHECK_TIMEOUT_MS) { isPaired() } ?: true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("pairing state unreadable: ${e.javaClass.simpleName}")
+        true
+    }
+
+    private inline fun guarded(what: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Exception) {
+            log("$what: could not enqueue work: ${e.javaClass.simpleName}")
+        }
     }
 
     private companion object {

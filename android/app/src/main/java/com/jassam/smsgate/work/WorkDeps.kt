@@ -26,6 +26,10 @@ class WorkDeps(
     val heartbeat: HeartbeatSource,
     /** The current FCM registration token, or null without Play services. Never logged. */
     val fcmToken: suspend () -> String?,
+    /** The FCM token the server last accepted (per device). */
+    val sentTokens: SentFcmTokens,
+    /** Whether the server clock has been synced in this process (ServerClock.isSynced). */
+    val clockSynced: () -> Boolean,
     /** Local wall clock (epoch ms) for journal timestamps. */
     val now: () -> Long = System::currentTimeMillis,
     /** Diagnostics; never pass numbers, bodies or tokens. */
@@ -47,10 +51,18 @@ class SmsGateWorkerFactory(private val deps: () -> WorkDeps) : WorkerFactory() {
         }
 }
 
-/** Retryable without risk of a duplicate effect: no response, timeouts, rate limits, server errors. */
+/**
+ * Retryable without risk of a duplicate effect: no response, timeouts, rate limits,
+ * server errors, and any 4xx without the backend's own error code (a proxy or
+ * misrouted request answering `http_<status>`: the backend never saw it).
+ */
 internal val ApiResult<*>.isTransient: Boolean
     get() = when (this) {
         is ApiResult.NetworkError -> true
-        is ApiResult.HttpError -> status == 408 || status == 429 || status >= 500
+        is ApiResult.HttpError -> status == 408 || status == 429 || status >= 500 || (status in 400..499 && !hasBackendCode)
         is ApiResult.Ok -> false
     }
+
+/** The response carried the backend's JSON error envelope (not a synthetic `http_<status>` code). */
+internal val ApiResult.HttpError.hasBackendCode: Boolean
+    get() = !code.startsWith("http_") && code != ApiResult.CODE_INVALID_RESPONSE

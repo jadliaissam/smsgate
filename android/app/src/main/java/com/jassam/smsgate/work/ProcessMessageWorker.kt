@@ -1,6 +1,7 @@
 package com.jassam.smsgate.work
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
@@ -19,9 +20,12 @@ import kotlinx.coroutines.withContext
  *
  * 1. A journal row for the id already exists → stop (a duplicate push or job).
  * 2. `claim(id)`: only a 200 allows sending. 409 `already_claimed`, 410 `expired`,
- *    404 → done, nothing sent. No response / 408 / 429 / 5xx → retry with
- *    exponential backoff, at most [MAX_CLAIM_ATTEMPTS] runs: a repeated claim is safe
- *    (409 if the server took it the first time, and then nothing is sent).
+ *    404 `message_not_found` → done, nothing sent. No response / 408 / 429 / 5xx /
+ *    a 4xx without the backend's error code (proxy) → retry with exponential backoff,
+ *    at most [MAX_CLAIM_ATTEMPTS] runs: a repeated claim is safe (409 if the server
+ *    took it the first time, and then nothing is sent). WorkManager's run count also
+ *    grows when the system stops the job (constraints lost, quota), so a flaky
+ *    network can use attempts up; the next sync's catch-up enqueues it again.
  * 3. After a 200, never retried: `insertClaimed` (false → another job owns it, don't
  *    send), then [com.jassam.smsgate.sms.SmsSender.send], which checks expiry on the
  *    server clock and reports `failed/expired_on_device` itself. This part is not
@@ -54,11 +58,11 @@ class ProcessMessageWorker(
                     deps.log("claim $id: unreadable response; not sent")
                     Result.failure()
                 }
+                claim.isTransient -> retryClaim(id, claim.code)
                 claim.status == 404 || claim.status == 409 || claim.status == 410 -> {
                     deps.log("claim $id: ${claim.code}")
                     Result.success()
                 }
-                claim.isTransient -> retryClaim(id, claim.code)
                 else -> {
                     deps.log("claim $id: HTTP ${claim.status} ${claim.code}")
                     Result.failure()
@@ -74,7 +78,9 @@ class ProcessMessageWorker(
         return if (last) Result.failure() else Result.retry()
     }
 
-    private suspend fun journalAndSend(message: ClaimedMessage): Result {
+    /** Step 3, after a 200. Internal for the isolated insert-guard test. */
+    @VisibleForTesting
+    internal suspend fun journalAndSend(message: ClaimedMessage): Result {
         val entry = JournalEntry.claimed(message, deps.now())
         val inserted = try {
             deps.journal.insertClaimed(entry)

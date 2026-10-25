@@ -23,13 +23,14 @@ class SmsGateMessagingServiceTest {
     private val app: Application = RuntimeEnvironment.getApplication()
     private lateinit var wm: WorkManager
     private var paired = true
+    private var pairedError: RuntimeException? = null
     private val id = "0192f0c4-0000-7000-8000-0000000000a1"
 
     @Before
     fun setUp() {
         WorkManagerTestInitHelper.initializeTestWorkManager(app, testWorkConfiguration())
         wm = WorkManager.getInstance(app)
-        SmsGateMessagingService.handlerOverride = PushHandler(Scheduler { wm }, isPaired = { paired })
+        SmsGateMessagingService.handlerOverride = PushHandler(Scheduler { wm }, isPaired = { pairedError?.let { throw it }; paired })
     }
 
     @After
@@ -84,6 +85,29 @@ class SmsGateMessagingServiceTest {
         paired = false
         SmsGateMessagingService().onNewToken("fcm-new")
         SmsGateMessagingService().onNewToken("")
+        assertTrue(allWork().isEmpty())
+    }
+
+    @Test
+    fun anUnreadablePairingStateNeverCrashesFirebasesThread() {
+        pairedError = java.security.ProviderException("keystore")
+        SmsGateMessagingService().onNewToken("fcm-new")
+        SmsGateMessagingService().onDeletedMessages()
+        // Enqueued anyway: the workers re-check and do nothing when unpaired.
+        assertEquals(1, infos(Scheduler.FCM_TOKEN).size)
+        assertEquals(1, infos(Scheduler.SYNC_NOW).size)
+    }
+
+    @Test
+    fun deletedMessagesTriggerACatchUpWhenPaired() {
+        SmsGateMessagingService().onDeletedMessages()
+        assertEquals(1, infos(Scheduler.SYNC_NOW).size)
+    }
+
+    @Test
+    fun deletedMessagesWhileUnpairedDoNothing() {
+        paired = false
+        SmsGateMessagingService().onDeletedMessages()
         assertTrue(allWork().isEmpty())
     }
 }

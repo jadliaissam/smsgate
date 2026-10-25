@@ -18,9 +18,11 @@ import kotlinx.coroutines.withContext
  * Final, so the journal marks it acked and it is never sent again:
  * - 200 (also the server's answer to a repeated, already-applied report);
  * - any 409 `invalid_transition` (the message is already in that or a later state);
- * - 404 / 422 `invalid_*` / other 4xx: the server will never accept it; logged and dropped.
+ * - 404 `message_not_found`, 422 `invalid_*` and any other 4xx carrying the backend's
+ *   error envelope: the server will never accept it; logged and dropped.
  *
- * No response, 408, 429 and 5xx retry. 401 goes to [Revocation].
+ * No response, 408, 429, 5xx and 4xx without the backend's envelope (a proxy's
+ * `http_<status>`) retry. Any 401 goes to [Revocation].
  */
 class ReportStatusWorker(
     context: Context,
@@ -39,25 +41,31 @@ class ReportStatusWorker(
             deps.revocation.onUnauthorized(null)
             return Result.failure()
         }
-        val result = deps.api(credentials).reportStatus(id, status, code, message)
-        return when {
-            result is ApiResult.Ok -> ack(id, status)
-            result.isTransient -> {
-                deps.log("report ${status.wire} for $id: ${(result as? ApiResult.HttpError)?.code ?: "network"}; retrying")
-                Result.retry()
-            }
-            result is ApiResult.HttpError && result.isUnauthorized -> {
-                deps.revocation.onUnauthorized(credentials.deviceToken)
-                Result.failure()
-            }
-            result is ApiResult.HttpError -> {
-                if (result.status !in 200..299 && !(result.status == 409 && result.code == INVALID_TRANSITION)) {
-                    deps.log("report ${status.wire} for $id dropped: HTTP ${result.status} ${result.code}")
+        return when (val result = deps.api(credentials).reportStatus(id, status, code, message)) {
+            is ApiResult.Ok -> ack(id, status)
+            is ApiResult.NetworkError -> retry(id, status, "network")
+            is ApiResult.HttpError -> when {
+                result.isUnauthorized -> {
+                    deps.revocation.onUnauthorized(credentials.deviceToken)
+                    Result.failure()
                 }
-                ack(id, status)
+                result.status in 200..299 -> ack(id, status) // accepted; body unreadable
+                result.isTransient -> retry(id, status, result.code)
+                else -> {
+                    // The backend's own verdict (404 message_not_found, 409 invalid_transition,
+                    // 422 invalid_*, other enveloped 4xx): it will never accept this report.
+                    if (!(result.status == 409 && result.code == INVALID_TRANSITION)) {
+                        deps.log("report ${status.wire} for $id dropped: HTTP ${result.status} ${result.code}")
+                    }
+                    ack(id, status)
+                }
             }
-            else -> Result.retry()
         }
+    }
+
+    private fun retry(id: String, status: Status, why: String): Result {
+        deps.log("report ${status.wire} for $id: $why; retrying")
+        return Result.retry()
     }
 
     private suspend fun ack(id: String, status: Status): Result = try {

@@ -8,11 +8,11 @@ import androidx.work.workDataOf
 import com.jassam.smsgate.api.ApiResult
 
 /**
- * Sends the FCM token to the server (`PUT /device/v1/fcm-token`). Enqueued by
- * `onNewToken` with the new token, and after pairing with none: it then reads the
- * current token. That second run closes the gap where a token refreshed between
- * pairing's `getToken` and `register` (when `onNewToken` found the phone unpaired
- * and dropped it) would leave the server with a stale token.
+ * Sends a refreshed FCM token to the server (`PUT /device/v1/fcm-token`). Enqueued
+ * by `onNewToken`, and by [SyncWorker] when the current token is not the one the
+ * server last accepted ([SentFcmTokens]); that sync check also closes the gap where
+ * a token refreshed between pairing's `getToken` and `register` (dropped by
+ * `onNewToken` while unpaired) would leave the server with a stale token.
  *
  * Unpaired → nothing (no revocation: pairing may be in progress). Unique with
  * REPLACE, so the newest token wins. The token is never logged.
@@ -24,12 +24,15 @@ class FcmTokenWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        val token = inputData.getString(KEY_TOKEN)?.takeIf { it.isNotBlank() } ?: return Result.failure()
         val credentials = deps.credentials.load() ?: return Result.success()
-        val token = inputData.getString(KEY_TOKEN) ?: deps.fcmToken() ?: return Result.success()
-        if (token.isBlank()) return Result.success()
+        if (deps.sentTokens.matches(credentials.deviceId, token)) return Result.success()
         val result = deps.api(credentials).setFcmToken(token)
         return when {
-            result is ApiResult.Ok -> Result.success()
+            result is ApiResult.Ok -> {
+                deps.sentTokens.remember(credentials.deviceId, token)
+                Result.success()
+            }
             result is ApiResult.HttpError && result.isUnauthorized -> {
                 deps.revocation.onUnauthorized(credentials.deviceToken)
                 Result.failure()
@@ -46,6 +49,6 @@ class FcmTokenWorker(
         const val KEY_TOKEN = "fcm_token"
         const val MAX_ATTEMPTS = 8
 
-        fun input(token: String?): Data = if (token == null) Data.EMPTY else workDataOf(KEY_TOKEN to token)
+        fun input(token: String): Data = workDataOf(KEY_TOKEN to token)
     }
 }

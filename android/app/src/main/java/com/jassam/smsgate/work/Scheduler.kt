@@ -25,18 +25,22 @@ interface WorkQueue : StatusReportQueue {
     /** The 15-minute periodic sync. Unique (KEEP), survives reboots. */
     fun schedulePeriodicSync()
 
-    /** Sends [token] to the server, or the current one when null. Unique (REPLACE: the newest token wins). */
-    fun setFcmToken(token: String?)
+    /** Sends [token] to the server. Unique (REPLACE: the newest token wins). */
+    fun setFcmToken(token: String)
 
     /** Cancels every job (revocation). */
     suspend fun cancelAll()
 }
 
-/** After pairing: periodic + immediate sync, and the current FCM token (see [FcmTokenWorker]). */
+/**
+ * After pairing: periodic + immediate sync. The sync also re-sends the current FCM
+ * token when the server may not have it, and every sync re-asserts the periodic job
+ * (KEEP), so a post-pairing hook cut short by its timeout heals on the next sync or
+ * app start.
+ */
 fun WorkQueue.onPaired() {
     schedulePeriodicSync()
     syncNow()
-    setFcmToken(null)
 }
 
 /**
@@ -89,7 +93,7 @@ class Scheduler(private val workManager: () -> WorkManager) : WorkQueue {
         wm.enqueueUniquePeriodicWork(SYNC_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
-    override fun setFcmToken(token: String?) {
+    override fun setFcmToken(token: String) {
         val request = OneTimeWorkRequestBuilder<FcmTokenWorker>()
             .setInputData(FcmTokenWorker.input(token))
             .setConstraints(network)

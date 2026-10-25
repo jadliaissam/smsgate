@@ -22,6 +22,9 @@ object ErrorCodes {
     /** D7 (work/CrashRecovery.kt): the app died after handing the SMS to Android, before its result. */
     const val OUTCOME_UNKNOWN = "outcome_unknown"
 
+    /** Claimed but not sent when the device was revoked (work/CrashRecovery.abandonClaimed); acked locally. */
+    const val DEVICE_REVOKED = "device_revoked"
+
     const val MAX_MESSAGE = 256
 
     private val PATTERN = Regex("[a-z0-9_]{1,64}")

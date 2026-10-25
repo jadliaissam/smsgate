@@ -7,6 +7,7 @@ import com.jassam.smsgate.auth.FakeTokenCipher
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +15,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,23 +75,43 @@ class RevocationTest {
     }
 
     @Test
-    fun pairingSchedulingIsSerializedWithRevocation() = runBlocking {
-        // A revocation decided while unpaired must not cancel the work a concurrent
-        // pairing schedules: exclusive() and onUnauthorized() never interleave.
+    fun aRevocationQueuedBehindPairingSeesTheNewCredentials() = runBlocking {
+        // A pairing stores credentials and schedules work inside exclusive(); a
+        // no-credentials revocation that arrives meanwhile must wait for it and then
+        // find the phone paired (no cancel). The revocation is started UNDISPATCHED
+        // while the hook holds the lock, so it is queued on the (FIFO) lock before the
+        // hook saves; with the lock in place it can't finish before the hook does.
         val inside = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
+        val revokeDone = CompletableDeferred<Unit>()
         val hook = async(Dispatchers.IO) {
             revocation.exclusive {
                 inside.complete(Unit)
                 release.await()
+                // Without the lock the revocation would finish here, before the save.
+                // With it this only waits (the outcome never depends on the bound).
+                withTimeoutOrNull(300) { revokeDone.await() }
+                store.save("https://a", "dev-1", "dt_1")
             }
         }
         inside.await()
-        val revoke = async(Dispatchers.IO) { revocation.onUnauthorized(null) }
-        kotlinx.coroutines.delay(100)
-        assertEquals(0, cancels.get()) // waiting for the hook
+        val revoke = async(start = CoroutineStart.UNDISPATCHED) {
+            revocation.onUnauthorized(null).also { revokeDone.complete(Unit) }
+        }
+        assertFalse("revocation must wait for the pairing hook", revoke.isCompleted)
         release.complete(Unit)
-        withTimeout(5_000) { hook.await(); revoke.await() }
-        assertEquals(1, cancels.get())
+        withTimeout(5_000) { hook.await() }
+        assertFalse(withTimeout(5_000) { revoke.await() })
+        assertEquals(0, cancels.get())
+        assertEquals(Credentials("https://a", "dev-1", "dt_1"), store.load())
+    }
+
+    @Test
+    fun revocationAbandonsClaimedRowsAfterCancelling() = runBlocking {
+        val order = mutableListOf<String>()
+        val r = Revocation(store, { order += "cancel" }, abandonClaimed = { order += "abandon" })
+        store.save("https://a", "dev-1", "dt_1")
+        assertTrue(r.onUnauthorized("dt_1"))
+        assertEquals(listOf("cancel", "abandon"), order)
     }
 }

@@ -8,8 +8,9 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * FCM entry point (not exported; Firebase delivers through its own receiver). Both
- * callbacks run on Firebase's background thread, so the short blocking read of the
- * pairing state in [onNewToken] is fine. All logic is in [PushHandler].
+ * callbacks run on Firebase's background thread, so the short, bounded blocking read
+ * of the pairing state in [onNewToken] / [onDeletedMessages] is fine. All logic is in
+ * [PushHandler], which never throws.
  */
 class SmsGateMessagingService : FirebaseMessagingService() {
     private fun handler(): PushHandler = handlerOverride ?: applicationContext.appGraph.pushHandler
@@ -20,6 +21,10 @@ class SmsGateMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         runBlocking { handler().onNewToken(token) }
+    }
+
+    override fun onDeletedMessages() {
+        runBlocking { handler().onDeletedMessages() }
     }
 
     internal companion object {

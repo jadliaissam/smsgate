@@ -42,7 +42,7 @@ internal class RecordingWorkQueue : WorkQueue {
 
     val processed: MutableList<Process> = Collections.synchronizedList(mutableListOf())
     val reports: MutableList<PendingReport> = Collections.synchronizedList(mutableListOf())
-    val tokens: MutableList<String?> = Collections.synchronizedList(mutableListOf())
+    val tokens: MutableList<String> = Collections.synchronizedList(mutableListOf())
     @Volatile var syncs = 0
     @Volatile var periodic = 0
     @Volatile var cancelled = 0
@@ -63,12 +63,21 @@ internal class RecordingWorkQueue : WorkQueue {
         periodic++
     }
 
-    override fun setFcmToken(token: String?) {
+    override fun setFcmToken(token: String) {
         tokens += token
     }
 
     override suspend fun cancelAll() {
         cancelled++
+    }
+}
+
+/** In-memory [SentFcmTokens]. */
+internal class MemorySentFcmTokens : SentFcmTokens {
+    val sent: MutableMap<String, String> = Collections.synchronizedMap(mutableMapOf())
+    override fun matches(deviceId: String, token: String) = sent[deviceId] == token
+    override fun remember(deviceId: String, token: String) {
+        sent[deviceId] = token
     }
 }
 
@@ -96,7 +105,8 @@ internal class WorkTestEnv(dir: File) : Closeable {
     val transport = FakeTransport()
     val queue = RecordingWorkQueue()
     val logs: MutableList<String> = Collections.synchronizedList(mutableListOf())
-    val revocation = Revocation(store, queue::cancelAll)
+    val revocation = Revocation(store, queue::cancelAll, abandonClaimed = { CrashRecovery.abandonClaimed(dao, wall) })
+    val sentTokens = MemorySentFcmTokens()
 
     var heartbeat: () -> Heartbeat = {
         Heartbeat(battery = 81, charging = true, signal = 3, sims = listOf(Sim(0, 11, "Orange")), appVersion = "1.2.3")
@@ -126,6 +136,8 @@ internal class WorkTestEnv(dir: File) : Closeable {
         revocation = revocation,
         heartbeat = { heartbeat() },
         fcmToken = { fcm },
+        sentTokens = sentTokens,
+        clockSynced = { clock.isSynced },
         now = { wall },
         log = { logs += it },
     )
