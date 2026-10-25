@@ -33,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -49,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.jassam.smsgate.R
 import com.jassam.smsgate.ui.theme.Elevation
 import com.jassam.smsgate.ui.theme.Motion
+import com.jassam.smsgate.ui.theme.Gradients
 import com.jassam.smsgate.ui.theme.Palette
 import com.jassam.smsgate.ui.theme.Radii
 import com.jassam.smsgate.ui.theme.SmsGateTheme
@@ -151,7 +151,7 @@ private fun SgButton(
         .graphicsLayer { scaleX = scale; scaleY = scale }
     m = when (kind) {
         ButtonKind.Primary -> m.elevation(Elevation.Control, Radii.Control).clip(Radii.Control)
-            .background(Brush.verticalGradient(listOf(Palette.Brand600, Palette.Brand700)))
+            .background(Gradients.vertical(listOf(Palette.Brand600, Palette.Brand700)))
         ButtonKind.Secondary -> m.elevation(Elevation.Control, Radii.Control).clip(Radii.Control)
             .background(colors.surface).border(1.dp, colors.border, Radii.Control)
         ButtonKind.Ghost -> m.clip(Radii.Control)

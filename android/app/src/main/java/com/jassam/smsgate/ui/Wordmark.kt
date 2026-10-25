@@ -13,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -24,6 +23,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jassam.smsgate.R
+import com.jassam.smsgate.ui.theme.Gradients
 import com.jassam.smsgate.ui.theme.Palette
 import com.jassam.smsgate.ui.theme.Radii
 import com.jassam.smsgate.ui.theme.SmsGateTheme
@@ -35,7 +35,7 @@ fun LogoMark(modifier: Modifier = Modifier, size: Dp = 32.dp) {
         modifier
             .size(size)
             .clip(Radii.LogoTile)
-            .background(Brush.linearGradient(listOf(Palette.Brand400, Palette.Brand600, Palette.Brand800))),
+            .background(Gradients.diagonal(listOf(Palette.Brand400, Palette.Brand600, Palette.Brand800))),
         contentAlignment = Alignment.Center,
     ) {
         Image(painterResource(R.drawable.ic_logo_bubble), contentDescription = null, modifier = Modifier.size(size * 0.62f))
