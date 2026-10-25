@@ -126,6 +126,27 @@ class RevocationTest {
     }
 
     @Test
+    fun revocationStopsTheSocketServiceButAStaleOneDoesNot() = runBlocking {
+        val stops = AtomicInteger()
+        val r = Revocation(store, { cancels.incrementAndGet() }, stopRealtime = { stops.incrementAndGet() })
+        store.save("https://a", "dev-2", "dt_new")
+        assertFalse(r.onUnauthorized("dt_old"))
+        assertEquals(0, stops.get())
+        assertTrue(r.onUnauthorized("dt_new"))
+        assertEquals(1, stops.get())
+        assertTrue(r.onUnauthorized(null)) // still unpaired: stop again, harmless
+        assertEquals(2, stops.get())
+    }
+
+    @Test
+    fun aFailingServiceStopStillAbandonsClaimedRows() = runBlocking {
+        val r = Revocation(store, { cancels.incrementAndGet() }, { abandons.incrementAndGet() }, stopRealtime = { throw IllegalStateException("x") })
+        store.save("https://a", "dev-1", "dt_1")
+        assertTrue(r.onUnauthorized("dt_1"))
+        assertEquals(1, abandons.get())
+    }
+
+    @Test
     fun revocationAbandonsClaimedRowsAfterCancelling() = runBlocking {
         val order = mutableListOf<String>()
         val r = Revocation(store, { order += "cancel" }, abandonClaimed = { order += "abandon" })

@@ -13,7 +13,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * Heartbeat and catch-up: every 15 minutes ([Scheduler.SYNC_PERIODIC]), and once
  * right away after pairing, on app start and after each push ([Scheduler.SYNC_NOW]).
  *
- * In order: heartbeat (also syncs the server clock); re-assert the periodic job
+ * In order: re-evaluate the always-connected policy (start/stop the socket service);
+ * heartbeat (also syncs the server clock); re-assert the periodic job
  * (KEEP, while these credentials are still current); FCM token re-send if the server may not have the current
  * one; fail stale SENDING rows ([CrashRecovery]); re-enqueue reports the server has
  * not confirmed (unique per (id, status), KEEP); `pending()` → a
@@ -36,6 +37,11 @@ class SyncWorker(
         }
         val api = deps.api(credentials)
         var offline = false
+
+        // Start or stop the always-connected socket (power or setting may have changed
+        // while its service wasn't running to see it). A refused background start is
+        // swallowed there: this sync is the fallback path anyway.
+        step("connection policy") { deps.evaluateConnection() }
 
         val heartbeat = step("heartbeat source") { deps.heartbeat.read() } ?: Heartbeat()
         when (val hb = api.heartbeat(heartbeat)) {

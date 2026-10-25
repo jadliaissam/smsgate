@@ -108,6 +108,18 @@ class SchedulerTest {
     }
 
     @Test
+    fun connectWhenChargingWaitsForPowerWithoutNetworkAndIsUnique() {
+        scheduler.connectWhenCharging()
+        val id = infos(Scheduler.CONNECT_WHEN_CHARGING).single().id
+        scheduler.connectWhenCharging()
+        val info = infos(Scheduler.CONNECT_WHEN_CHARGING).single()
+        assertEquals(id, info.id)
+        assertTrue(info.constraints.requiresCharging())
+        assertEquals(NetworkType.NOT_REQUIRED, info.constraints.requiredNetworkType)
+        assertTrue(Scheduler.TAG in info.tags)
+    }
+
+    @Test
     fun cancelAllCancelsEveryJob() = runBlocking {
         scheduler.processMessage(ID, expedited = true)
         scheduler.enqueue(ID, Status.SENT, null, null)

@@ -274,11 +274,35 @@ class SyncWorkerTest {
     }
 
     @Test
+    fun everySyncReevaluatesTheConnectionPolicy() = runBlocking {
+        respondHeartbeat()
+        respondPending()
+        assertEquals(Result.success(), run())
+        assertEquals(1, env.evaluations)
+
+        // Offline: still evaluated (power or the setting may have changed meanwhile).
+        env.dropConnection()
+        env.dropConnection()
+        run(attempt = SyncWorker.MAX_ATTEMPTS - 1)
+        assertEquals(2, env.evaluations)
+    }
+
+    @Test
+    fun aFailingPolicyEvaluationDoesNotStopTheSync() = runBlocking {
+        env.evaluate = { throw IllegalStateException("refused") }
+        respondHeartbeat()
+        respondPending(ID)
+        assertEquals(Result.success(), run())
+        assertEquals(listOf(RecordingWorkQueue.Process(ID, false)), env.queue.processed.toList())
+    }
+
+    @Test
     fun unauthorizedHeartbeatRevokesAndStops() = runBlocking {
         env.respondError(401, "unauthorized")
         assertEquals(Result.failure(), run())
         assertNull(env.store.load())
         assertEquals(1, env.queue.cancelled)
+        assertEquals(1, env.realtimeStops) // the socket service is stopped too
         assertEquals(1, env.server.requestCount)
         assertTrue(env.queue.processed.isEmpty())
     }

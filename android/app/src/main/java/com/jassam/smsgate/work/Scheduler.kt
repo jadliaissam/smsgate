@@ -11,6 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.await
 import com.jassam.smsgate.api.Status
+import com.jassam.smsgate.realtime.ConnectWhenChargingWorker
 import com.jassam.smsgate.sms.StatusReportQueue
 import java.util.concurrent.TimeUnit
 
@@ -107,12 +108,26 @@ class Scheduler(private val workManager: () -> WorkManager) : WorkQueue {
         wm.cancelAllWork().await()
     }
 
+    /**
+     * Applies the connection policy again once the phone is plugged in (charging
+     * constraint, no network needed), so the always-connected socket comes back without
+     * waiting for the next sync. Unique (KEEP): arming it again changes nothing.
+     */
+    fun connectWhenCharging() {
+        val request = OneTimeWorkRequestBuilder<ConnectWhenChargingWorker>()
+            .setConstraints(Constraints.Builder().setRequiresCharging(true).build())
+            .addTag(TAG)
+            .build()
+        wm.enqueueUniqueWork(CONNECT_WHEN_CHARGING, ExistingWorkPolicy.KEEP, request)
+    }
+
     companion object {
         /** Tag on every job of this app. */
         const val TAG = "smsgate"
         const val SYNC_NOW = "sync-now"
         const val SYNC_PERIODIC = "sync-periodic"
         const val FCM_TOKEN = "fcm-token"
+        const val CONNECT_WHEN_CHARGING = "connect-when-charging"
         const val SYNC_INTERVAL_MINUTES = 15L
         const val BACKOFF_SECONDS = 10L
 

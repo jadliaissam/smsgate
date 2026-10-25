@@ -19,6 +19,16 @@ import com.jassam.smsgate.auth.KeystoreTokenCipher
 import com.jassam.smsgate.journal.JournalDao
 import com.jassam.smsgate.journal.JournalDb
 import com.jassam.smsgate.push.PushHandler
+import com.jassam.smsgate.realtime.AndroidServiceControl
+import com.jassam.smsgate.realtime.AndroidSocketLoop
+import com.jassam.smsgate.realtime.ConnectionPrefs
+import com.jassam.smsgate.realtime.ConnectionState
+import com.jassam.smsgate.realtime.Connectivity
+import com.jassam.smsgate.realtime.ConnectivityService
+import com.jassam.smsgate.realtime.PowerState
+import com.jassam.smsgate.realtime.ReconnectBackoff
+import com.jassam.smsgate.realtime.ServiceControl
+import com.jassam.smsgate.realtime.SocketClient
 import com.jassam.smsgate.sim.SimInventory
 import com.jassam.smsgate.sms.PlatformSmsTransport
 import com.jassam.smsgate.sms.SmsIntents
@@ -39,6 +49,11 @@ import com.jassam.smsgate.work.Scheduler
 import com.jassam.smsgate.work.WorkDeps
 import com.jassam.smsgate.work.onPaired
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
@@ -104,15 +119,82 @@ class AppGraph(context: Context) {
      */
     val statusReportQueue: StatusReportQueue get() = scheduler
 
-    /** The single 401 path: wipe credentials (if still the token used), cancel all work, abandon CLAIMED rows. */
+    /**
+     * The single 401 path: wipe credentials (if still the token used), cancel all work,
+     * stop the socket service, abandon CLAIMED rows.
+     */
     val revocation: Revocation by lazy {
         Revocation(
             credentials = credentialStore,
             cancelAllWork = scheduler::cancelAll,
             abandonClaimed = { CrashRecovery.abandonClaimed(journalDao, System.currentTimeMillis()) },
             log = ::warn,
+            stopRealtime = serviceControl::stop,
         )
     }
+
+    /** Process-wide scope for short fire-and-forget work started from callbacks (socket revocation). */
+    private val appScope: CoroutineScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+
+    private val serviceControl: ServiceControl by lazy { AndroidServiceControl(app) }
+
+    /** The "Always connected" setting (own small DataStore). */
+    val connectionPrefs: ConnectionPrefs by lazy {
+        ConnectionPrefs(
+            PreferenceDataStoreFactory.create(
+                corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+                produceFile = { app.preferencesDataStoreFile("connection") },
+            ),
+        )
+    }
+
+    /**
+     * The always-connected mode (D5, Task A7): setting, live state, policy evaluation.
+     * A8's settings toggle calls [Connectivity.setAlwaysConnected] and shows
+     * [Connectivity.state].
+     */
+    val connectivity: Connectivity by lazy {
+        Connectivity(
+            prefs = connectionPrefs,
+            isPaired = { credentialStore.load() != null },
+            isCharging = { PowerState.isPluggedIn(app) },
+            service = serviceControl,
+            connectWhenCharging = scheduler::connectWhenCharging,
+            log = ::warn,
+        )
+    }
+
+    /** What [ConnectivityService] needs; one [SocketClient] (own thread and timers) per start. */
+    fun connectivityServiceDeps(): ConnectivityService.Deps = ConnectivityService.Deps(
+        pairing = credentialStore.state,
+        alwaysConnected = connectionPrefs.alwaysConnected,
+        credentials = credentialStore::load,
+        isCharging = { PowerState.isPluggedIn(app) },
+        newClient = { credentials, onState ->
+            SocketClient(
+                credentials = credentials,
+                httpClient = httpClient,
+                loop = AndroidSocketLoop(app),
+                backoff = ReconnectBackoff(Random.Default),
+                queue = scheduler,
+                clock = serverClock,
+                heartbeat = heartbeatSource,
+                onRevoked = { token -> appScope.launch { revocation.onUnauthorized(token) } },
+                onState = onState,
+                log = ::warn,
+            )
+        },
+        onState = connectivity::report,
+        onRunning = { running ->
+            connectivity.serviceRunning = running
+            if (!running) connectivity.report(ConnectionState.OFF)
+        },
+        onUnpluggedStop = scheduler::connectWhenCharging,
+        log = ::warn,
+    )
+
+    /** Battery, charging, signal, SIMs, app version for heartbeats (HTTP and socket). */
+    val heartbeatSource: DeviceHeartbeatSource by lazy { DeviceHeartbeatSource(app, simInventory, BuildConfig.VERSION_NAME) }
 
     /** Hands claimed messages to SmsManager (at most once per journal row). */
     val smsSender: SmsSender by lazy {
@@ -146,12 +228,13 @@ class AppGraph(context: Context) {
             sender = smsSender,
             queue = scheduler,
             revocation = revocation,
-            heartbeat = DeviceHeartbeatSource(app, simInventory, BuildConfig.VERSION_NAME),
+            heartbeat = heartbeatSource,
             fcmToken = PlayServices::fcmToken,
             sentTokens = PrefsSentFcmTokens(app),
             clockSynced = { serverClock.isSynced },
             now = System::currentTimeMillis,
             log = ::warn,
+            evaluateConnection = { connectivity.evaluate() },
         )
     }
 
@@ -166,15 +249,20 @@ class AppGraph(context: Context) {
 
     /**
      * Runs once credentials are stored after pairing (bounded by Pairer): periodic +
-     * immediate sync, serialized with revocation. If the timeout cuts it short, the
-     * next sync or app start schedules the periodic job again (KEEP).
+     * immediate sync, serialized with revocation, then the always-connected policy (the
+     * app is in the foreground, so the service may start). If the timeout cuts it short,
+     * the next sync or app start schedules the periodic job again (KEEP).
      */
-    val postPairingHook: PostPairingHook = PostPairingHook { revocation.exclusive { scheduler.onPaired() } }
+    val postPairingHook: PostPairingHook = PostPairingHook {
+        revocation.exclusive { scheduler.onPaired() }
+        connectivity.evaluate()
+    }
 
     /**
      * App start (MainActivity, off the main thread so WorkManager's initialisation is
      * not on the cold-start path): when paired, make sure the periodic sync exists
-     * (KEEP) and run one sync now. Never throws.
+     * (KEEP), run one sync now and apply the always-connected policy (in the foreground,
+     * so the service may start). Never throws.
      */
     suspend fun onAppStart() {
         try {
@@ -183,6 +271,7 @@ class AppGraph(context: Context) {
                 scheduler.schedulePeriodicSync()
                 scheduler.syncNow()
             }
+            connectivity.evaluate()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

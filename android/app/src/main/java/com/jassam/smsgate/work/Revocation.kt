@@ -14,8 +14,9 @@ import kotlinx.coroutines.withContext
  * credentials are wiped only if they still hold the token the request used
  * ([CredentialStore.clearIfToken], never an unconditional clear), then all
  * WorkManager work is cancelled (process, report, sync and token jobs, so nothing
- * driven by FCM keeps running). Journal rows still CLAIMED are abandoned
- * ([CrashRecovery.abandonClaimed]) so a later pairing never sends them, but only
+ * driven by FCM keeps running) and the always-connected socket service is stopped
+ * (its socket also stops itself on `revoked`). Journal rows still CLAIMED are
+ * abandoned ([CrashRecovery.abandonClaimed]) so a later pairing never sends them, but only
  * when the credentials were really cleared or the store is definitively empty: a
  * token that is just unreadable right now (Keystore/DataStore glitch) leaves them for
  * recovery. The journal itself is kept. The UI follows the credential state back to
@@ -35,6 +36,8 @@ class Revocation(
     private val cancelAllWork: suspend () -> Unit,
     private val abandonClaimed: suspend () -> Unit = {},
     private val log: (String) -> Unit = {},
+    /** Stops the always-connected socket service (cancelling work does not stop a service). */
+    private val stopRealtime: () -> Unit = {},
 ) {
     private val lock = Mutex()
 
@@ -53,6 +56,11 @@ class Revocation(
             }
             log(if (cleared) "device revoked: credentials wiped, work cancelled" else "no credentials: work cancelled")
             cancelAllWork()
+            try {
+                stopRealtime()
+            } catch (e: Exception) {
+                log("stopping the socket service failed: ${e.javaClass.simpleName}")
+            }
             if (cleared || credentials.stored() == StoredCredentials.NONE) {
                 try {
                     abandonClaimed()

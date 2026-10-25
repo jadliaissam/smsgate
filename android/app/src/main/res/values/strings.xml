@@ -108,6 +108,12 @@
     <string name="notification_channel_sending">Sending messages</string>
     <string name="notification_sending_title">Sending message</string>
 
+    <!-- Always-connected service (foreground notification) -->
+    <string name="notification_channel_connection">Always connected</string>
+    <string name="notification_channel_connection_description">Shown while SMSGate keeps a live connection to your server.</string>
+    <string name="notification_connected_title">SMSGate is connected</string>
+    <string name="notification_connected_text">Messages are sent as soon as they’re queued.</string>
+
     <!-- Placeholder home (Task A8 builds the real one) -->
     <string name="home_paired_title">This phone is paired</string>
     <string name="home_paired_body">Connected to %1$s. Messages queued for this device will be sent from here.</string>

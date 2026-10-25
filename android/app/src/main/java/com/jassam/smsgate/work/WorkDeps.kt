@@ -9,6 +9,7 @@ import com.jassam.smsgate.api.DeviceApi
 import com.jassam.smsgate.auth.CredentialStore
 import com.jassam.smsgate.auth.Credentials
 import com.jassam.smsgate.journal.JournalDao
+import com.jassam.smsgate.realtime.ConnectWhenChargingWorker
 import com.jassam.smsgate.sms.SmsSender
 
 /**
@@ -34,6 +35,8 @@ class WorkDeps(
     val now: () -> Long = System::currentTimeMillis,
     /** Diagnostics; never pass numbers, bodies or tokens. */
     val log: (String) -> Unit = {},
+    /** Applies the always-connected policy (Connectivity.evaluate): starts/stops the socket service. Never throws. */
+    val evaluateConnection: suspend () -> Unit = {},
 )
 
 /**
@@ -47,6 +50,7 @@ class SmsGateWorkerFactory(private val deps: () -> WorkDeps) : WorkerFactory() {
             ReportStatusWorker::class.java.name -> ReportStatusWorker(appContext, workerParameters, deps())
             SyncWorker::class.java.name -> SyncWorker(appContext, workerParameters, deps())
             FcmTokenWorker::class.java.name -> FcmTokenWorker(appContext, workerParameters, deps())
+            ConnectWhenChargingWorker::class.java.name -> ConnectWhenChargingWorker(appContext, workerParameters, deps())
             else -> null
         }
 }

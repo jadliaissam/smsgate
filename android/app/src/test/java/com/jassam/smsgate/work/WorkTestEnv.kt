@@ -105,7 +105,17 @@ internal class WorkTestEnv(dir: File) : Closeable {
     val transport = FakeTransport()
     val queue = RecordingWorkQueue()
     val logs: MutableList<String> = Collections.synchronizedList(mutableListOf())
-    val revocation = Revocation(store, queue::cancelAll, abandonClaimed = { CrashRecovery.abandonClaimed(dao, wall) })
+    @Volatile var realtimeStops = 0
+    val revocation = Revocation(
+        store,
+        queue::cancelAll,
+        abandonClaimed = { CrashRecovery.abandonClaimed(dao, wall) },
+        stopRealtime = { realtimeStops++ },
+    )
+
+    /** Connection policy evaluations requested by workers (Connectivity.evaluate in the app). */
+    @Volatile var evaluations = 0
+    var evaluate: suspend () -> Unit = { evaluations++ }
     val sentTokens = MemorySentFcmTokens()
 
     var heartbeat: () -> Heartbeat = {
@@ -140,6 +150,7 @@ internal class WorkTestEnv(dir: File) : Closeable {
         clockSynced = { clock.isSynced },
         now = { wall },
         log = { logs += it },
+        evaluateConnection = { evaluate() },
     )
 
     fun pair(token: String = TOKEN, deviceId: String = "dev-1") = runBlocking { store.save(base, deviceId, token) }
