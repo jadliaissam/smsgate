@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-25 (A0 to A4 merged; A5 and A6 done on branch feat/android-a5, not merged; A7 next).
+Last updated: 2026-10-25 (A0 to A4 merged; A5 to A7 done on branch feat/android-a5, not merged; A8 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -50,11 +50,11 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** continue the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A7 (always-connected WebSocket service) on branch `feat/android-a5`, which holds A5 and A6 (committed, reviewed, not pushed and not merged; ask the user before pushing or opening the PR). Notes for A7:
-   - A WebSocket `new` frame calls `appGraph.scheduler.processMessage(id, expedited = true)` (id through `MessageIds.normalize`). It is the same unique job as an FCM push, so replayed frames are harmless.
-   - Every connect or reconnect calls `scheduler.syncNow()` (heartbeat, pending, recovery). The backend replays at most 64 wakes per device.
-   - A `revoked` frame or a backend 401 (`isRevocation`) goes through `appGraph.revocation.onUnauthorized(tokenUsed)`, never `credentialStore.clear()`. A bare proxy 401 means reconnect with backoff. `Revocation` needs a hook that stops the foreground service. A8's Unpair must also go through `Revocation`.
-   - Feed `server_time` from the socket into `ServerClock`; reuse `DeviceHeartbeatSource` for heartbeat frames; `SyncWorker` should re-evaluate the connection policy.
+**Suggested next step:** continue the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A8 (home, log and settings screens) on branch `feat/android-a5`, which holds A5, A6 and A7 (committed and reviewed, not pushed and not merged; ask the user before pushing or opening the PR). Notes for A8:
+   - Settings toggle: `appGraph.connectivity.alwaysConnected` (Flow), `setAlwaysConnected(enabled)` (returns false when it could not be saved), `state` (OFF, CONNECTING, CONNECTED, WAITING), `evaluate()`.
+   - When the user turns on "Always connected" while unplugged, prompt for the battery-optimisation exemption (D12) or say that the socket may drop in Doze (an inexact alarm may fire only once per 9 minutes in deep Doze, longer than the server's 6-minute idle timeout) and messages then arrive through FCM.
+   - Unpair must go through `appGraph.revocation.onUnauthorized(token)` after `unregister` (it cancels work, stops the service and abandons unsent CLAIMED rows); never call `credentialStore.clear()` or `stopService` directly. Use `Connectivity.stop()` to stop the service.
+   - A10 checks: deep-Doze ping spacing with and without the exemption, sticky restart refused on API 31+, carrier NAT timeouts, reconnect herd after a deploy, alarm wake-up rate, `specialUse` on API 34 and 35.
 
 **Rules that apply:**
 - No `Co-Authored-By` trailer and no AI attribution of any kind in commits or PRs (the user's standing instruction, 2026-10-24).
@@ -147,7 +147,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 (journal and SMS sender) and A6 (wake, claim, send, report) approved on `feat/android-a5`, not merged. A7 to A10 not started |
+| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 (journal and SMS sender), A6 (wake, claim, send, report) and A7 (always-connected WebSocket service) approved on `feat/android-a5`, not merged. A8 to A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
 Live dashboard: https://smsgate-web.captain-1.duckdns.org. The device WebSocket (`/device/v1/ws`) is live since 2026-10-25; no phone has connected to it yet.
