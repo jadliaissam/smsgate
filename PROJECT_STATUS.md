@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-25 (A0 to A4 done and merged; A5 next).
+Last updated: 2026-10-25 (A0 to A4 merged; A5 done on branch feat/android-a5, not merged; A6 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -50,7 +50,10 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** resume the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A5 (message journal and SMS sender), on a new branch from `main`.
+**Suggested next step:** resume the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A6 (wake, claim, send, report), on branch `feat/android-a5` (A5 is committed there, reviewed, not pushed or merged). Notes for A6:
+   - Claim, then `insertClaimed(JournalEntry.claimed(msg, now))` (false = do not send), then `smsSender.send(entry)`; expiry is checked inside `send` on the server clock.
+   - `ReportStatusWorker`: a 200 or any `409 invalid_transition` is final; call `journalDao.markAcked(id, status)`. Replace the no-op `statusReportQueue` in `AppGraph` (`TODO(A6)`).
+   - `SyncWorker` order: crash recovery (`staleSending` rows go `SENDING` to `FAILED` with `outcome_unknown` through `moveTo`; resume `staleClaimed` rows through `send`), re-enqueue `unackedReports()` (unique, KEEP per id and status), then `JournalRetention.run`.
 
 **Rules that apply:**
 - No `Co-Authored-By` trailer and no AI attribution of any kind in commits or PRs (the user's standing instruction, 2026-10-24).
@@ -143,7 +146,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 to A10 not started |
+| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 (journal and SMS sender) approved on `feat/android-a5`, not merged. A6 to A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
 Live dashboard: https://smsgate-web.captain-1.duckdns.org. The device WebSocket (`/device/v1/ws`) is live since 2026-10-25; no phone has connected to it yet.
