@@ -25,8 +25,16 @@ class DeliveryStatusTest {
 
     @Test
     fun withoutStatusUsesResultCode() {
-        assertEquals(DELIVERED, DeliveryStatus.outcome(Activity.RESULT_OK, null, null))
-        assertEquals(PENDING, DeliveryStatus.outcome(Activity.RESULT_CANCELED, null, null))
-        assertEquals(FAILED, DeliveryStatus.outcome(Activity.RESULT_OK, "3gpp", 0x41))
+        assertEquals(DELIVERED, DeliveryStatus.outcome(Activity.RESULT_OK, null))
+        assertEquals(DELIVERED, DeliveryStatus.outcome(Activity.RESULT_OK, DeliveryReport("3gpp", pduPresent = false, status = null)))
+        assertEquals(PENDING, DeliveryStatus.outcome(Activity.RESULT_CANCELED, null))
+        assertEquals(FAILED, DeliveryStatus.outcome(Activity.RESULT_OK, DeliveryReport("3gpp", true, 0x41)))
+        assertEquals(DELIVERED, DeliveryStatus.outcome(Activity.RESULT_OK, DeliveryReport("3gpp", true, 0x00)))
+    }
+
+    @Test
+    fun unparseablePduIsPendingNotDelivered() {
+        assertEquals(PENDING, DeliveryStatus.outcome(Activity.RESULT_OK, DeliveryReport("3gpp", pduPresent = true, status = null)))
+        assertEquals(PENDING, DeliveryStatus.outcome(Activity.RESULT_OK, DeliveryReport(null, pduPresent = true, status = null)))
     }
 }

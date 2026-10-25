@@ -32,8 +32,8 @@ class SmsResultReceiverTest {
     }
 
     private fun sink(block: () -> Unit = {}) {
-        SmsResultReceiver.sinkOverride = SmsResultSink { ref, code, format, status ->
-            calls += listOf(ref, code, format, status)
+        SmsResultReceiver.sinkOverride = SmsResultSink { ref, code, delivery ->
+            calls += listOf(ref, code, delivery)
             block()
         }
     }
@@ -62,7 +62,7 @@ class SmsResultReceiverTest {
         sink { thread = Thread.currentThread() }
         val ref = PartRef("m1", 1, PartKind.SENT)
         broadcast(SmsIntents.intent(app, ref), 2)
-        assertEquals(listOf(listOf(ref, 2, null, null)), calls)
+        assertEquals(listOf(listOf(ref, 2, null)), calls)
         assertTrue(thread != Looper.getMainLooper().thread)
     }
 
@@ -71,7 +71,16 @@ class SmsResultReceiverTest {
         sink()
         val ref = PartRef("m1", 0, PartKind.DELIVERED)
         broadcast(SmsIntents.intent(app, ref).putExtra("format", "3gpp"), Activity.RESULT_OK)
-        assertEquals(listOf(listOf(ref, Activity.RESULT_OK, "3gpp", null)), calls)
+        assertEquals(listOf(listOf(ref, Activity.RESULT_OK, DeliveryReport("3gpp", pduPresent = false, status = null))), calls)
+    }
+
+    @Test
+    fun unparseablePduIsPassedOnAsPresentWithoutStatus() {
+        sink()
+        val ref = PartRef("m1", 0, PartKind.DELIVERED)
+        val garbage = byteArrayOf(0x7F, 0x01, 0x02)
+        broadcast(SmsIntents.intent(app, ref).putExtra("pdu", garbage).putExtra("format", "3gpp"), Activity.RESULT_OK)
+        assertEquals(listOf(listOf(ref, Activity.RESULT_OK, DeliveryReport("3gpp", pduPresent = true, status = null))), calls)
     }
 
     @Test

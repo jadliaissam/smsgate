@@ -7,6 +7,7 @@ package com.jassam.smsgate.sms
  */
 object ErrorCodes {
     const val SIM_UNAVAILABLE = "sim_unavailable"
+    const val NO_DEFAULT_SIM = "no_default_sim"
     const val PERMISSION_DENIED = "permission_denied"
     const val INVALID_DESTINATION = "invalid_destination"
     const val SEND_EXCEPTION = "send_exception"
@@ -15,7 +16,7 @@ object ErrorCodes {
     const val BODY_MISSING = "body_missing"
     const val DELIVERY_FAILED = "delivery_failed"
 
-    /** For A6: the validity window passed before sending. */
+    /** The validity window passed before sending (SmsSender, before markSending). */
     const val EXPIRED_ON_DEVICE = "expired_on_device"
 
     /** For A6 (D7): the app died after handing the SMS to Android, before its result. */

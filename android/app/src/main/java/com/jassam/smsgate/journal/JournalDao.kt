@@ -23,7 +23,7 @@ abstract class JournalDao {
      * row for this id already exists: the caller must not send.
      */
     suspend fun insertClaimed(entry: JournalEntry): Boolean {
-        require(entry.state == JournalState.CLAIMED && entry.parts == 0 && entry.reported.isEmpty()) {
+        require(entry.state == JournalState.CLAIMED && entry.parts == 0 && entry.reported.isEmpty() && entry.acked.isEmpty()) {
             "insertClaimed takes a fresh CLAIMED entry"
         }
         return insertOrIgnore(entry) != -1L
@@ -61,15 +61,19 @@ abstract class JournalDao {
     ): Int
 
     /**
-     * Moves the row to [to] if [JournalState.canMove] allows it from its current
-     * state; otherwise changes nothing ([MoveResult.REFUSED]). Entering SENT,
-     * DELIVERED, FAILED or SKIPPED_EXPIRED adds the matching status to `reported`
-     * in the same transaction and returns it as the report to enqueue.
-     * [errorCode]/[errorMessage] are required for FAILED and SKIPPED_EXPIRED.
+     * Moves the row from [expectedFrom] to [to], only if the row is still in
+     * [expectedFrom] and [JournalState.canMove] allows the move; otherwise changes
+     * nothing ([MoveResult.REFUSED]). The expected source makes a decision taken on
+     * a stale read (e.g. crash recovery of a SENDING row whose late result already
+     * moved it to SENT) a no-op. Entering SENT, DELIVERED, FAILED or SKIPPED_EXPIRED
+     * adds the matching status to `reported` in the same transaction and returns it
+     * as the report to enqueue. [errorCode]/[errorMessage] are required for FAILED
+     * and SKIPPED_EXPIRED.
      */
     @Transaction
     open suspend fun moveTo(
         id: String,
+        expectedFrom: JournalState,
         to: JournalState,
         now: Long,
         errorCode: String? = null,
@@ -77,8 +81,9 @@ abstract class JournalDao {
     ): MoveResult {
         val failing = to == JournalState.FAILED || to == JournalState.SKIPPED_EXPIRED
         require(!failing || errorCode != null) { "$to needs an error code" }
+        if (!JournalState.canMove(expectedFrom, to)) return MoveResult.REFUSED
         val entry = get(id) ?: return MoveResult.REFUSED
-        if (!JournalState.canMove(entry.state, to)) return MoveResult.REFUSED
+        if (entry.state != expectedFrom) return MoveResult.REFUSED
         val code = if (failing) errorCode else entry.errorCode
         val message = if (failing) errorMessage else entry.errorMessage
         val report = JournalState.reportFor(to)?.takeIf { it !in entry.reported }
@@ -110,6 +115,35 @@ abstract class JournalDao {
         return report?.let { reportOf(id, it, change.errorCode, change.errorMessage) }
     }
 
+    @Query("UPDATE journal SET acked = :acked WHERE id = :id")
+    protected abstract suspend fun writeAcked(id: String, acked: Set<Status>): Int
+
+    /**
+     * Records that the server confirmed [status] for [id] (a 200, or a 409
+     * invalid_transition the reporter treats as final). Idempotent; only statuses in
+     * `reported` can be acked. Returns true when this call added it.
+     */
+    @Transaction
+    open suspend fun markAcked(id: String, status: Status): Boolean {
+        val entry = get(id) ?: return false
+        if (status !in entry.reported || status in entry.acked) return false
+        return writeAcked(id, entry.acked + status) == 1
+    }
+
+    // The converter writes sets in a canonical order and acked ⊆ reported, so equal sets are equal strings.
+    @Query("SELECT * FROM journal WHERE reported != acked ORDER BY updatedAt")
+    protected abstract suspend fun rowsWithUnackedReports(): List<JournalEntry>
+
+    /**
+     * Statuses decided (`reported`) but not confirmed by the server (`acked`), with
+     * the error code/message a `failed` report needs, oldest first. Re-enqueue them
+     * (unique per (id, status)) to close the gap between a commit and the enqueue.
+     */
+    suspend fun unackedReports(): List<PendingReport> =
+        rowsWithUnackedReports().flatMap { e ->
+            (e.reported - e.acked).sortedBy { it.ordinal }.map { reportOf(e.id, it, e.errorCode, e.errorMessage) }
+        }
+
     private fun reportOf(id: String, status: Status, code: String?, message: String?): PendingReport =
         if (status == Status.FAILED) PendingReport(id, status, code, message) else PendingReport(id, status)
 
@@ -120,6 +154,14 @@ abstract class JournalDao {
     /** Retention: deletes rows created before [ms] (epoch ms), any state. */
     @Query("DELETE FROM journal WHERE createdAt < :ms")
     abstract suspend fun deleteOlderThan(ms: Long): Int
+
+    /**
+     * Resume: rows still CLAIMED (claimed and journaled but never handed to
+     * Android) with no progress since [beforeMs] (epoch ms). Safe to pass to
+     * SmsSender.send again: markSending still guards, and expiry is checked there.
+     */
+    @Query("SELECT * FROM journal WHERE state = 'CLAIMED' AND updatedAt < :beforeMs ORDER BY updatedAt")
+    abstract suspend fun staleClaimed(beforeMs: Long): List<JournalEntry>
 
     /** Crash recovery (D7): rows still SENDING with no progress since [beforeMs] (epoch ms). */
     @Query("SELECT * FROM journal WHERE state = 'SENDING' AND updatedAt < :beforeMs ORDER BY updatedAt")

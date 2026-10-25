@@ -1,6 +1,8 @@
 package com.jassam.smsgate
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
@@ -96,9 +98,14 @@ class AppGraph(context: Context) {
             dao = journalDao,
             transport = PlatformSmsTransport(app),
             sims = simInventory::activeSims,
+            phoneStateGranted = {
+                app.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+            },
+            defaultSmsSubscriptionId = PlatformSmsTransport::defaultSmsSubscriptionId,
             intents = { ref -> SmsIntents.pendingIntent(app, ref) },
             reports = statusReportQueue,
             now = System::currentTimeMillis,
+            serverNow = { serverClock.serverNow().toEpochMilliseconds() },
             log = { Log.w("SmsGate", it) },
         )
     }

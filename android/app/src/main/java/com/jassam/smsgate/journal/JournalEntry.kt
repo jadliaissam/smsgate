@@ -15,8 +15,10 @@ import com.jassam.smsgate.api.Status
  * Times are epoch milliseconds from an injected clock. [partsSent] and
  * [partsDelivered] are bitmasks (bit n = part n), so a duplicated or reordered
  * broadcast can't be counted twice; at most [MAX_PARTS] parts.
- * [reported] holds the statuses already handed to the report queue, written in
+ * [reported] holds the statuses decided and handed to the report queue, written in
  * the same transaction that decides to report, so each is enqueued at most once.
+ * [acked] holds the subset the server has confirmed ([JournalDao.markAcked]);
+ * `reported - acked` is what must still be (re-)enqueued ([JournalDao.unackedReports]).
  */
 @Entity(
     tableName = "journal",
@@ -41,12 +43,13 @@ data class JournalEntry(
     /** Last state or part change: [JournalDao.staleSending] uses it for crash recovery (D7). */
     val updatedAt: Long,
     val reported: Set<Status> = emptySet(),
+    val acked: Set<Status> = emptySet(),
 ) {
     override fun toString(): String =
         "JournalEntry(id=$id, to=***, body=${body?.let { "<${it.length} chars>" }}, simSlot=$simSlot, " +
             "expiresAt=$expiresAt, state=$state, errorCode=$errorCode, errorMessage=$errorMessage, parts=$parts, " +
             "partsSent=$partsSent, partsDelivered=$partsDelivered, createdAt=$createdAt, updatedAt=$updatedAt, " +
-            "reported=$reported)"
+            "reported=$reported, acked=$acked)"
 
     companion object {
         /** SMS concatenation is tracked in a 64-bit mask per kind. */

@@ -53,6 +53,7 @@ class JournalDaoTest {
     fun insertClaimedRejectsNonFreshRows() = runBlocking {
         assertTrue(runCatching { dao.insertClaimed(claimedEntry("m1").copy(state = SENDING)) }.isFailure)
         assertTrue(runCatching { dao.insertClaimed(claimedEntry("m1").copy(reported = setOf(Status.SENT))) }.isFailure)
+        assertTrue(runCatching { dao.insertClaimed(claimedEntry("m1").copy(acked = setOf(Status.SENT))) }.isFailure)
         assertNull(dao.get("m1"))
     }
 
@@ -107,7 +108,7 @@ class JournalDaoTest {
             val id = "m-$from-$to"
             dao.insertClaimed(claimedEntry(id))
             db.force(id, from, parts = 1)
-            val result = dao.moveTo(id, to, 9_000, errorCode = "some_code", errorMessage = "msg")
+            val result = dao.moveTo(id, from, to, 9_000, errorCode = "some_code", errorMessage = "msg")
             val row = dao.get(id)!!
             if (JournalState.canMove(from, to)) {
                 assertTrue("$from -> $to", result.moved)
@@ -126,12 +127,117 @@ class JournalDaoTest {
     }
 
     @Test
+    fun moveToRefusesWhenTheRowIsNotInTheExpectedSource() = runBlocking {
+        for (actual in JournalState.entries) for (expected in JournalState.entries - actual) for (to in JournalState.entries) {
+            val id = "m-$actual-$expected-$to"
+            dao.insertClaimed(claimedEntry(id))
+            db.force(id, actual, parts = 1)
+            assertEquals("$actual (expected $expected) -> $to", MoveResult.REFUSED, dao.moveTo(id, expected, to, 9_000, "c", "m"))
+            assertEquals(actual, dao.get(id)!!.state)
+            assertEquals(emptySet<Status>(), dao.get(id)!!.reported)
+        }
+    }
+
+    @Test
+    fun recoveryAfterALateSentResultIsRefused() = runBlocking {
+        sending("m1", 1)
+        val stale = dao.staleSending(10_000).single() // recovery reads SENDING ...
+        assertEquals(PendingReport("m1", Status.SENT), dao.applyPartEvent("m1", PartEvent.Sent(0), 3_000)) // ... a late result commits
+        val recovery = dao.moveTo(stale.id, SENDING, FAILED, 4_000, "outcome_unknown", "lost")
+        assertEquals(MoveResult.REFUSED, recovery)
+        val row = dao.get("m1")!!
+        assertEquals(SENT, row.state)
+        assertNull(row.errorCode)
+        assertEquals(setOf(Status.SENT), row.reported)
+    }
+
+    @Test
+    fun acksAreIdempotentAndOnlyForReportedStatuses() = runBlocking {
+        sending("m1", 1)
+        assertFalse("not reported yet", dao.markAcked("m1", Status.SENT))
+        dao.applyPartEvent("m1", PartEvent.Sent(0), 3_000)
+        assertFalse(dao.markAcked("m1", Status.DELIVERED))
+        assertTrue(dao.markAcked("m1", Status.SENT))
+        assertFalse(dao.markAcked("m1", Status.SENT))
+        assertFalse(dao.markAcked("missing", Status.SENT))
+        val row = dao.get("m1")!!
+        assertEquals(setOf(Status.SENT), row.acked)
+        assertEquals(setOf(Status.SENT), row.reported)
+        assertEquals(3_000, row.updatedAt)
+    }
+
+    @Test
+    fun unackedReportsListReportedMinusAcked() = runBlocking {
+        sending("delivered", 1)
+        dao.applyPartEvent("delivered", PartEvent.Sent(0), 3_000)
+        dao.applyPartEvent("delivered", PartEvent.Delivered(0), 3_100)
+        dao.insertClaimed(claimedEntry("expired"))
+        dao.moveTo("expired", CLAIMED, SKIPPED_EXPIRED, 2_500, "expired_on_device", "too late")
+        sending("failed", 2)
+        dao.applyPartEvent("failed", PartEvent.SendFailed(1, "radio_off", "part 2"), 2_600)
+        sending("sending", 1)
+        dao.insertClaimed(claimedEntry("claimed"))
+        assertEquals(
+            listOf(
+                PendingReport("expired", Status.FAILED, "expired_on_device", "too late"),
+                PendingReport("failed", Status.FAILED, "radio_off", "part 2"),
+                PendingReport("delivered", Status.SENT),
+                PendingReport("delivered", Status.DELIVERED),
+            ),
+            dao.unackedReports(),
+        )
+        dao.markAcked("delivered", Status.SENT)
+        dao.markAcked("expired", Status.FAILED)
+        assertEquals(
+            listOf(PendingReport("failed", Status.FAILED, "radio_off", "part 2"), PendingReport("delivered", Status.DELIVERED)),
+            dao.unackedReports(),
+        )
+        dao.markAcked("delivered", Status.DELIVERED)
+        dao.markAcked("failed", Status.FAILED)
+        assertEquals(emptyList<PendingReport>(), dao.unackedReports())
+    }
+
+    @Test
+    fun staleClaimedListsOnlyIdleClaimedRows() = runBlocking {
+        dao.insertClaimed(claimedEntry("old", now = 1_000))
+        dao.insertClaimed(claimedEntry("new", now = 8_000))
+        dao.insertClaimed(claimedEntry("sending", now = 1_000))
+        dao.markSending("sending", 1_500)
+        assertEquals(listOf("old"), dao.staleClaimed(5_000).map { it.id })
+        assertEquals(listOf("old", "new"), dao.staleClaimed(9_000).map { it.id })
+    }
+
+    @Test
+    fun concurrentResultsForDifferentPartsAreNotLost() = runBlocking {
+        val parts = 12
+        repeat(10) { round ->
+            val id = "m$round"
+            sending(id, parts)
+            val ready = CountDownLatch(parts)
+            val go = CountDownLatch(1)
+            val reports = (0 until parts).map { p ->
+                async(Dispatchers.IO) {
+                    ready.countDown()
+                    go.await(5, TimeUnit.SECONDS)
+                    dao.applyPartEvent(id, PartEvent.Sent(p), 3_000)
+                }
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            go.countDown()
+            assertEquals(listOf(PendingReport(id, Status.SENT)), reports.awaitAll().filterNotNull())
+            val row = dao.get(id)!!
+            assertEquals(JournalEntry.allParts(parts), row.partsSent)
+            assertEquals(SENT, row.state)
+        }
+    }
+
+    @Test
     fun moveToFailedCarriesErrorAndReportsOnce() = runBlocking {
         dao.insertClaimed(claimedEntry("m1"))
         dao.markSending("m1", 2_000)
-        val r = dao.moveTo("m1", FAILED, 3_000, "sim_unavailable", "No active SIM in slot 1")
+        val r = dao.moveTo("m1", SENDING, FAILED, 3_000, "sim_unavailable", "No active SIM in slot 1")
         assertEquals(PendingReport("m1", Status.FAILED, "sim_unavailable", "No active SIM in slot 1"), r.report)
-        assertEquals(MoveResult.REFUSED, dao.moveTo("m1", FAILED, 3_000, "sim_unavailable", "again"))
+        assertEquals(MoveResult.REFUSED, dao.moveTo("m1", SENDING, FAILED, 3_000, "sim_unavailable", "again"))
         val row = dao.get("m1")!!
         assertEquals("sim_unavailable", row.errorCode)
         assertEquals("No active SIM in slot 1", row.errorMessage)
@@ -141,7 +247,7 @@ class JournalDaoTest {
     @Test
     fun skippedExpiredReportsFailed() = runBlocking {
         dao.insertClaimed(claimedEntry("m1"))
-        val r = dao.moveTo("m1", SKIPPED_EXPIRED, 2_000, "expired_on_device", null)
+        val r = dao.moveTo("m1", CLAIMED, SKIPPED_EXPIRED, 2_000, "expired_on_device", null)
         assertEquals(PendingReport("m1", Status.FAILED, "expired_on_device", null), r.report)
         assertEquals(0, dao.markSending("m1", 2_000))
     }
@@ -149,10 +255,10 @@ class JournalDaoTest {
     @Test
     fun moveToRequiresErrorCodeForFailures() = runBlocking {
         dao.insertClaimed(claimedEntry("m1"))
-        assertTrue(runCatching { dao.moveTo("m1", FAILED, 2_000) }.isFailure)
-        assertTrue(runCatching { dao.moveTo("m1", SKIPPED_EXPIRED, 2_000) }.isFailure)
+        assertTrue(runCatching { dao.moveTo("m1", CLAIMED, FAILED, 2_000) }.isFailure)
+        assertTrue(runCatching { dao.moveTo("m1", CLAIMED, SKIPPED_EXPIRED, 2_000) }.isFailure)
         assertEquals(CLAIMED, dao.get("m1")!!.state)
-        assertEquals(MoveResult.REFUSED, dao.moveTo("missing", SENT, 2_000))
+        assertEquals(MoveResult.REFUSED, dao.moveTo("missing", SENDING, SENT, 2_000))
     }
 
     private suspend fun sending(id: String, parts: Int) {

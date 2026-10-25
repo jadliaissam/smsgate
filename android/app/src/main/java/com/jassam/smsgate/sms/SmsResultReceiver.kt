@@ -22,17 +22,18 @@ class SmsResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val ref = SmsIntents.parse(intent) ?: return
         val code = resultCode
-        var format: String? = null
-        var status: Int? = null
-        if (ref.kind == PartKind.DELIVERED) {
-            format = intent.getStringExtra(EXTRA_FORMAT)
-            status = readStatus(intent.getByteArrayExtra(EXTRA_PDU), format)
+        val delivery = if (ref.kind == PartKind.DELIVERED) {
+            val format = intent.getStringExtra(EXTRA_FORMAT)
+            val pdu = intent.getByteArrayExtra(EXTRA_PDU)
+            DeliveryReport(format, pdu != null, readStatus(pdu, format))
+        } else {
+            null
         }
         val pending: PendingResult? = goAsync()
         scope.launch {
             try {
                 val sink = sinkOverride ?: context.appGraph.smsResultHandler
-                sink.handle(ref, code, format, status)
+                sink.handle(ref, code, delivery)
             } catch (e: Exception) {
                 Log.w(TAG, "result ${ref.kind.wire} for ${ref.id} part ${ref.part} not recorded: ${e.javaClass.simpleName}")
             } finally {

@@ -21,10 +21,12 @@ internal class FakeTransport : SmsTransport, SmsChannel {
     var throwOnChannel: Exception? = null
     var throwOnDivide: Exception? = null
     var onSend: () -> Unit = {}
-    val channelRequests: MutableList<Int?> = Collections.synchronizedList(mutableListOf())
+    var onChannel: () -> Unit = {}
+    val channelRequests: MutableList<Int> = Collections.synchronizedList(mutableListOf())
     val sends: MutableList<Sent> = Collections.synchronizedList(mutableListOf())
 
-    override fun channel(subscriptionId: Int?): SmsChannel? {
+    override fun channel(subscriptionId: Int): SmsChannel? {
+        onChannel()
         channelRequests += subscriptionId
         throwOnChannel?.let { throw it }
         return if (available) this else null

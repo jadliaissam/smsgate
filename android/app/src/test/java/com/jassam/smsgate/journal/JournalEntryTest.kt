@@ -23,6 +23,7 @@ class JournalEntryTest {
         assertTrue(s.contains("id=m1"))
         assertTrue(s.contains("to=***"))
         assertTrue(s.contains("body=<16 chars>"))
+        assertTrue(s.contains("acked=[]"))
         assertTrue(e.copy(body = null).toString().contains("body=null"))
     }
 
