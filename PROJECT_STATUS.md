@@ -1,6 +1,6 @@
 # SMSGate — project status and setup
 
-Last updated: 2026-10-25 (A0 to A4 merged; A5 to A7 done on branch feat/android-a5, not merged; A8 next).
+Last updated: 2026-10-25 (A0 to A8 done and merged; A9 next).
 
 SMSGate is a public service that lets developers send SMS, mainly phone-number verification codes, through their own Android phones:
 
@@ -37,7 +37,7 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 
 **Where things stand in git:**
 - `main` holds the backend, the complete dashboard, CI/CD and this file. It is what runs in production (revision `3d5b2bf` before the history rewrite; the same code now has new hashes). Merging to `main` deploys.
-- `main` also holds the Android work A0 to A4 and the backend device WebSocket (migrations `00006` and `00007`), merged on 2026-10-25. The Android app is not released yet: no APK is published. Continue the Android plan on a new branch from `main` (for example `feat/android-a5`) and merge by pull request.
+- `main` also holds the Android work A0 to A8 and the backend device WebSocket (migrations `00006` and `00007`), merged on 2026-10-25. The Android app is not released yet: no APK is published. Continue the Android plan on a new branch from `main` (for example `feat/android-a9`) and merge by pull request.
 - On 2026-10-24 all commit messages on `main` and `feat/android-app` were rewritten to remove AI co-author trailers. Code is unchanged. Local backup branches `backup/main-before-rewrite` and `backup/android-before-rewrite` hold the old history; delete them when no longer wanted.
 - `smsgate-e5a24-*.json` (Firebase service-account key) is git-ignored; never commit it. `google-services.json` (Android Firebase config) is private and git-ignored everywhere; copy it into `android/app/` for local builds. CI reads it from the GitHub secret `GOOGLE_SERVICES_JSON_BASE64`.
 - `.superpowers/sdd/` holds the detailed progress ledgers, including every ruling and deferred minor issue (`2026-10-24-android-app/progress.md` is the Android one). It is git-ignored, so it exists only on the original machine. If it is missing, this file and `git log` are the record.
@@ -50,11 +50,9 @@ This file is a handoff. Read it fully, then the design spec, before changing any
 - **Python TLS on this Mac:** HTTPS calls from Python need `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 - **Polling:** check build status once per call. The user rejected long polling loops.
 
-**Suggested next step:** continue the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A8 (home, log and settings screens) on branch `feat/android-a5`, which holds A5, A6 and A7 (committed and reviewed, not pushed and not merged; ask the user before pushing or opening the PR). Notes for A8:
-   - Settings toggle: `appGraph.connectivity.alwaysConnected` (Flow), `setAlwaysConnected(enabled)` (returns false when it could not be saved), `state` (OFF, CONNECTING, CONNECTED, WAITING), `evaluate()`.
-   - When the user turns on "Always connected" while unplugged, prompt for the battery-optimisation exemption (D12) or say that the socket may drop in Doze (an inexact alarm may fire only once per 9 minutes in deep Doze, longer than the server's 6-minute idle timeout) and messages then arrive through FCM.
-   - Unpair must go through `appGraph.revocation.onUnauthorized(token)` after `unregister` (it cancels work, stops the service and abandons unsent CLAIMED rows); never call `credentialStore.clear()` or `stopService` directly. Use `Connectivity.stop()` to stop the service.
-   - A10 checks: deep-Doze ping spacing with and without the exemption, sticky restart refused on API 31+, carrier NAT timeouts, reconnect herd after a deploy, alarm wake-up rate, `specialUse` on API 34 and 35.
+**Suggested next step:** continue the Android plan (`docs/superpowers/plans/2026-10-24-android-app.md`) with Task A9 (release pipeline and APK download), on a new branch from `main`. A5 to A8 (journal and SMS sender; wake, claim, send and report; always-connected WebSocket service; home, log and settings screens) are approved and merged. Notes for A9 and A10:
+   - A9: the release APK is about 2.7 MB unsigned. Keep `compose-ui-test-manifest` as `debugImplementation`. The licences screen lists libraries in `ui/settings/LicencesScreen.kt`; update it if release libraries change. Release signing needs a keystore and the GitHub secrets listed under "Release signing" below.
+   - A10 real-phone checks: QR scan (portrait and landscape) and the confirmation dialog; OEM battery screens; deep-Doze ping spacing with and without the battery exemption (an inexact alarm may fire only once per 9 minutes, longer than the server's 6-minute idle timeout, so the socket may drop and messages then arrive by FCM); sticky restart refused on API 31+; carrier NAT timeouts; reconnect herd after a deploy; alarm wake-up rate; `specialUse` on API 34 and 35; cold start and theme flash; main-thread binder calls on Home and Settings; TalkBack; 200 % font at 320 dp; unpair from Settings; time-zone change while Home is open; instrumented Keystore round-trip.
 
 **Rules that apply:**
 - No `Co-Authored-By` trailer and no AI attribution of any kind in commits or PRs (the user's standing instruction, 2026-10-24).
@@ -147,7 +145,7 @@ Each departure was deliberate and is recorded in a plan or ledger:
 | Email | Gmail SMTP configured on the API; a test email arrived; the API's own verification email is untested |
 | Push (FCM) | Service-account key configured on the API; no phone has received a push yet |
 | Android plan | Written and approved: `docs/superpowers/plans/2026-10-24-android-app.md` |
-| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 (journal and SMS sender), A6 (wake, claim, send, report) and A7 (always-connected WebSocket service) approved on `feat/android-a5`, not merged. A8 to A10 not started |
+| Android build | Tasks A0 to A4 approved and merged (A1, A3 and A4 after fix rounds). A5 to A8 approved (after fix rounds) and merged. A9 and A10 not started |
 | Quota enforcement, webhooks, billing | Designed, not implemented |
 
 Live dashboard: https://smsgate-web.captain-1.duckdns.org. The device WebSocket (`/device/v1/ws`) is live since 2026-10-25; no phone has connected to it yet.
